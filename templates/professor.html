@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel Professor - InovaTech</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="icon" href="{{ url_for('static', filename='logo-inovatech.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+
+  <style>
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 25px; }
+    .stat-card { background: var(--bg-card); padding: 20px; border-radius: 10px; border: 1px solid var(--border); display: flex; align-items: center; gap: 15px; transition: 0.3s; }
+    .stat-card:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.08); border-color: var(--primary); }
+    .stat-icon { width: 50px; height: 50px; border-radius: 50%; background: #e6f2ff; color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+    .stat-info h3 { margin: 0; font-size: 1.5rem; color: var(--text-main); }
+    .stat-info p { margin: 0; color: var(--text-sec); font-size: 0.9rem; }
+    
+    .chart-container { background: white; padding: 20px; border-radius: 10px; margin-top: 25px; border: 1px solid #e0e0e0; height: 300px; display: flex; justify-content: center; }
+
+    .prof-table { width: 100%; border-collapse: collapse; margin-top: 15px; background: var(--bg-card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    .prof-table th { background: rgba(0,0,0,0.05); padding: 12px; text-align: left; color: var(--text-main); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .prof-table td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    
+    .input-nota { width: 60px; padding: 5px; border: 1px solid var(--border); border-radius: 4px; text-align: center; background: var(--bg-body); color: var(--text-main); }
+    
+    .btn-action { padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; color: #fff; font-size: 0.85rem; transition: 0.2s; }
+    .btn-save { background: #28a745; } .btn-save:hover { background: #218838; }
+    .btn-download { background: #007acc; } .btn-download:hover { background: #005f99; }
+    .btn-pdf { background: #6f42c1; font-weight: bold; } .btn-pdf:hover { background: #5a32a3; }
+    .btn-profile { background: #6c757d; } .btn-profile:hover { background: #5a6268; }
+    
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; }
+    .status-ativo { background: #d4edda; color: #155724; }
+    .status-entregue { background: #d1ecf1; color: #0c5460; }
+    .status-pendente { background: #fff3cd; color: #856404; }
+  </style>
+</head>
+
+<body>
+<div class="dashboard-container">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <img src="{{ url_for('static', filename='logo-inovatech.png') }}" alt="Logo InovaTech">
+      <h3>InovaTech</h3>
+    </div>
+    <ul class="sidebar-menu">
+      <li><a href="#" data-target="inicio" class="active"><i class="fas fa-home"></i> Visão Geral</a></li>
+      <li class="menu-header">Gestão Acadêmica</li>
+      <li><a href="#" data-target="gerenciar-alunos"><i class="fas fa-users"></i> Meus Alunos</a></li>
+      <li><a href="#" data-target="lancar-notas"><i class="fas fa-clipboard-check"></i> Lançar Notas</a></li>
+      <li><a href="#" data-target="lancar-frequencia"><i class="fas fa-calendar-check"></i> Lançar Frequência</a></li>
+      <li><a href="#" data-target="criar-atividade"><i class="fas fa-pen-to-square"></i> Criar Atividade</a></li>
+      <li><a href="#" data-target="consultar-entregas"><i class="fas fa-file-arrow-down"></i> Entregas</a></li>
+      <li class="menu-header">Planejamento</li>
+      <li><a href="#" data-target="calendario-professor"><i class="fas fa-calendar-alt"></i> Calendário</a></li>
+      <li class="menu-header">Inteligência Artificial</li>
+      <li><a href="#" data-target="relatorio-ia-prof"><i class="fas fa-robot"></i> Central IA</a></li>
+      
+      <li style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+          <a href="#" id="toggleDark"><i class="fas fa-moon"></i> Modo Escuro</a>
+      </li>
+      <li>
+          <a href="#" id="notifBtn">
+              <i class="fas fa-bell"></i> Notificações 
+              <span class="notification-badge">3</span>
+          </a>
+      </li>
+    </ul>
+    <div class="sidebar-footer"><p>Prof. Inova</p><a href="#" id="logout"><i class="fas fa-sign-out-alt"></i> Sair</a></div>
+  </div>
+
+  <div class="main-content">
+    <h1 id="pageTitle">Olá, Professor 👋</h1>
+
+    <div id="inicio" class="content-section">
+      <div class="welcome-header">
+        <div><h2>Gestão de Turmas</h2><p>Acompanhe o progresso e atividades.</p></div>
+        <i class="fas fa-chalkboard-user fa-3x" style="color:var(--primary); opacity:0.5;"></i>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-user-graduate"></i></div><div class="stat-info"><h3 id="totalAlunos">3</h3><p>Alunos</p></div></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-layer-group"></i></div><div class="stat-info"><h3 id="totalTurmas">1</h3><p>Turmas</p></div></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-book-open"></i></div><div class="stat-info"><h3 id="totalAtividades">7</h3><p>Atividades</p></div></div>
+      </div>
+      <div class="chart-container"><canvas id="turmaChart"></canvas></div>
+      <div class="dashboard-grid">
+        <a href="#" class="dashboard-card" data-target="criar-atividade"><i class="fas fa-pen-to-square"></i><h3>Nova Atividade</h3></a>
+        <a href="#" class="dashboard-card" data-target="lancar-notas"><i class="fas fa-star"></i><h3>Lançar Notas</h3></a>
+        <a href="#" class="dashboard-card" data-target="lancar-frequencia"><i class="fas fa-check-double"></i><h3>Frequência</h3></a>
+        <a href="#" class="dashboard-card" data-target="relatorio-ia-prof"><i class="fas fa-brain"></i><h3>Central IA</h3></a>
+      </div>
+    </div>
+
+    <div id="gerenciar-alunos" class="content-section" style="display:none;">
+      <h2>Meus Alunos</h2>
+      <div class="boxIA">
+        <h3>Turma: ADS - 2º Semestre</h3>
+        <table class="prof-table">
+          <thead><tr><th>Matrícula</th><th>Nome</th><th>Status</th><th>Ação</th></tr></thead>
+          <tbody>
+            <tr><td>2025001</td><td>Maria Silva</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+            <tr><td>2025002</td><td>João Pereira</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+            <tr><td>2025003</td><td>Ana Costa</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="lancar-notas" class="content-section" style="display:none;">
+      <h2>Lançar Notas</h2>
+      <div class="boxIA">
+        <h3>Disciplina: Web</h3>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>P1</th><th>P2</th><th>Salvar</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td><input type="number" class="input-nota" value="8.5"></td><td><input type="number" class="input-nota" value="9.0"></td><td><button class="btn-action btn-save">💾</button></td></tr>
+            <tr><td>João Pereira</td><td><input type="number" class="input-nota" value="6.0"></td><td><input type="number" class="input-nota" value="7.5"></td><td><button class="btn-action btn-save">💾</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="lancar-frequencia" class="content-section" style="display:none;">
+      <h2>Lançar Frequência</h2>
+      <div class="boxIA">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3>Chamada</h3>
+            <button class="btn-action btn-pdf"><i class="fas fa-file-pdf"></i> Gerar Diário Digital</button>
+        </div>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>Presença</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td><input type="checkbox" checked> Presente</td></tr>
+            <tr><td>João Pereira</td><td><input type="checkbox" checked> Presente</td></tr>
+            <tr><td>Ana Costa</td><td><input type="checkbox"> <span style="color:red">Ausente</span></td></tr>
+          </tbody>
+        </table>
+        <button class="btn-action btn-save" style="margin-top:15px; padding:10px 20px;">Confirmar Chamada</button>
+      </div>
+    </div>
+
+    <div id="consultar-entregas" class="content-section" style="display:none;">
+      <h2>Entregas</h2>
+      <div class="boxIA">
+        <h3>Atividade: PIM IV</h3>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>Arquivo</th><th>Ação</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td>PIM_Maria.pdf</td><td><button class="btn-action btn-download">⬇ Baixar</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="criar-atividade" class="content-section" style="display:none;">
+      <h2>Criar Nova Atividade</h2>
+      <div class="boxIA">
+        <form id="formNovaAtividade">
+          <div class="form-container" style="margin-top:0; border:none; padding:0;">
+            <label>Título</label><input type="text" id="titulo" required>
+            <label>Disciplina</label><input type="text" id="disciplina" required>
+            <label>Data</label><input type="date" id="data_entrega" required>
+            <button type="submit">Publicar</button>
+          </div>
+        </form>
+        <div id="msgAtividade" style="margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <div id="calendario-professor" class="content-section" style="display:none;">
+      <h2>Calendário</h2>
+      <div id="calendarProfessor"></div>
+    </div>
+
+    <div id="relatorio-ia-prof" class="content-section" style="display:none;">
+      <h2>Central de Inteligência Artificial (Docente)</h2>
+      
+      <div class="boxIA">
+         <h3><i class="fas fa-chart-line"></i> Análise Geral da Turma</h3>
+         <p>Utilize a InoAI para identificar padrões de desempenho e média global.</p>
+         <button id="gerarRelatorioProfessor"><i class="fas fa-search"></i> Analisar Turma Agora</button>
+         <div id="resultadoRelatorioProfessor" style="display:none; margin-top:15px; padding-top:15px; border-top:1px solid #eee;"></div>
+      </div>
+
+      <div class="boxIA" style="border-left: 5px solid #dc3545;">
+        <h3><i class="fas fa-exclamation-triangle" style="color:#dc3545"></i> Radar de Evasão Escolar</h3>
+        <p>A IA identificou alunos com alta probabilidade de reprovação baseada em faltas e notas.</p>
+        <button id="btnRadarRisco" style="background:#dc3545;"><i class="fas fa-user-injured"></i> Ver Alunos em Risco</button>
+        
+        <div id="listaRisco" style="display:none; margin-top:15px;">
+            <table class="prof-table">
+                <thead><tr><th>Aluno</th><th>Risco Calculado</th><th>Motivo Principal</th></tr></thead>
+                <tbody>
+                    <tr><td>Ana Costa</td><td><span style="color:red; font-weight:bold;">85%</span></td><td>Excesso de Faltas (12)</td></tr>
+                    <tr><td>Carlos Lima</td><td><span style="color:orange; font-weight:bold;">45%</span></td><td>Queda brusca de notas</td></tr>
+                </tbody>
+            </table>
+            <p style="font-size:0.9em; color:#666; margin-top:10px;">* Sugestão da InoAI: Agendar reunião pedagógica com estes alunos.</p>
+        </div>
+      </div>
+
+      <div class="boxIA" style="border-left: 5px solid #28a745;">
+        <h3><i class="fas fa-magic" style="color:#28a745"></i> Assistente de Criação de Provas</h3>
+        <p>Peça para a InoAI gerar uma questão de prova sobre qualquer tema.</p>
+        
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <input type="text" id="temaQuestao" placeholder="Digite um tema (ex: SQL, Python, Ética)..." style="flex:1;">
+            <button id="btnGerarQuestao" style="background:#28a745; margin-top:0;"><i class="fas fa-bolt"></i> Gerar</button>
+        </div>
+
+        <div id="resultadoQuestao" style="display:none; margin-top:15px; background:#f8f9fa; padding:15px; border-radius:6px; border:1px dashed #ccc;">
+            <p><b>🤖 Questão Gerada:</b></p>
+            <p id="textoQuestao" style="font-style:italic; color:#333;">...</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="notif-dropdown" id="notifDropdown">
+    <div class="notif-item new">📢 <b>Sistema:</b> InovaTech v32.0 rodando!</div>
+    <div class="notif-item new">📅 <b>Agenda:</b> Reunião Pedagógica (15/11).</div>
+    <div class="notif-item">🎓 <b>Diretoria:</b> Prazos de notas abertos.</div>
+</div>
+
+<div id="chatBtn" class="chat-widget-btn"><i class="fas fa-comments"></i></div>
+<div id="chatWindow" class="chat-window">
+  <div class="chat-header">
+    <span><i class="fas fa-robot"></i> InoAI</span>
+    <div style="display:flex; gap:15px; align-items:center;">
+        <i class="fas fa-volume-mute" id="toggleVoice" style="cursor:pointer; font-size:1.1em; opacity:0.7;" title="Ativar Voz"></i>
+        <span class="chat-close" id="closeChat">&times;</span>
+    </div>
+  </div>
+  <div class="chat-body" id="chatBody"><div class="chat-msg bot">Olá, Professor! Posso ajudar a calcular médias ou agendar atividades?</div></div>
+  <div class="chat-input-area"><input type="text" id="chatInput" placeholder="Digite sua dúvida..."><button id="chatSend"><i class="fas fa-paper-plane"></i></button></div>
+</div>
+
+<div id="toast">Ação realizada!</div>
+
+</body>
+</html>

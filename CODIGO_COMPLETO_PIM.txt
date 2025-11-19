@@ -1,0 +1,2516 @@
+============================================================
+DOCUMENTAÇÃO TÉCNICA - SISTEMA INOVATECH
+CÓDIGO FONTE COMPLETO
+============================================================
+
+==================================================
+ARQUIVO: app.py
+==================================================
+# ============================================================
+# SISTEMA INOVATECH – DASHBOARD EDUCACIONAL
+# Arquivo: app.py
+# Versão: 35.0 (InoAI Centralizada - Cérebro Unificado)
+# Descrição:
+#   Backend leve. A lógica de conversação foi movida para
+#   o cerebro_ia.py, deixando este arquivo focado em dados e ML.
+# ============================================================
+
+from flask import Flask, request, jsonify, render_template
+from flask_cors import CORS
+import sqlite3
+import os
+from werkzeug.utils import secure_filename
+import socket
+import ctypes
+import random
+
+# === IMPORTAÇÃO DO CÉREBRO (A Alma da InoAI) ===
+try:
+    from cerebro_ia import buscar_resposta_avancada
+except ImportError:
+    print("⚠️ ERRO: 'cerebro_ia.py' não encontrado. A IA ficará muda.")
+    def buscar_resposta_avancada(msg): return None
+
+# === IMPORTAÇÕES MACHINE LEARNING (O Raciocínio) ===
+try:
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.naive_bayes import MultinomialNB
+    ML_ATIVO = True
+except ImportError:
+    ML_ATIVO = False
+    print("⚠️ AVISO: Scikit-Learn não instalado.")
+
+# =====================
+# CONFIGURAÇÕES BÁSICAS
+# =====================
+app = Flask(__name__, template_folder='templates', static_folder='static')
+CORS(app)
+
+DATABASE_FILE = 'academia.db'
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx', 'zip', 'rar', 'txt'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# =====================
+# INTEGRAÇÃO C (Legado)
+# =====================
+try:
+    dll = ctypes.CDLL("./analise.dll")
+    dll.verificar_risco_ia.argtypes = [ctypes.c_double, ctypes.c_int]
+    dll.verificar_risco_ia.restype = ctypes.c_int
+except Exception:
+    dll = None
+
+# =====================
+# TREINAMENTO (ML + Sentimentos)
+# =====================
+modelo_inoai = None
+modelo_emocao = None
+vetorizador = None
+
+def treinar_inteligencia():
+    global modelo_inoai, modelo_emocao, vetorizador
+    if not ML_ATIVO: return
+
+    print("🧠 InoAI: Carregando modelos neurais...")
+    
+    # 1. RISCO (Regressão Linear)
+    np.random.seed(42)
+    notas = np.random.normal(7.0, 2.0, 1000).clip(0, 10)
+    faltas = np.random.normal(4 + (10 - notas), 3, 1000).clip(0, 30)
+    risco = (faltas * 3.5) + ((10 - notas) * 8.5) + np.random.normal(0, 5, 1000)
+    X_risco = np.column_stack((notas, faltas))
+    
+    modelo_inoai = LinearRegression()
+    modelo_inoai.fit(X_risco, risco.clip(0, 100))
+    
+    # 2. EMOÇÃO (Naive Bayes)
+    frases = ["odeio", "horrivel", "triste", "reprovei", "dificil", "chato", "raiva", "medo",
+              "amo", "adoro", "legal", "incrivel", "bom", "excelente", "aprovei", "feliz"]
+    classes = [0]*8 + [1]*8
+    
+    vetorizador = CountVectorizer()
+    X_emo = vetorizador.fit_transform(frases)
+    modelo_emocao = MultinomialNB()
+    modelo_emocao.fit(X_emo, classes)
+    
+    print("✅ InoAI: Sistemas Cognitivos Online (Risco + Emoção)!")
+
+def analisar_sentimento(texto):
+    if not modelo_emocao: return ""
+    palavras_chave = ['odeio','amo','triste','feliz','horrivel','otimo','medo','incrivel','ruim','bom']
+    if not any(p in texto for p in palavras_chave): return ""
+    
+    sentimento = modelo_emocao.predict(vetorizador.transform([texto]))[0]
+    return "😟 Sinto que você não está bem... " if sentimento == 0 else "✨ Que energia boa! "
+
+# =====================
+# BANCO DE DADOS
+# =====================
+def get_conn(row_factory: bool = False):
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.execute("PRAGMA foreign_keys = ON")
+    if row_factory: conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_conn()
+    conn.cursor().executescript("""
+    CREATE TABLE IF NOT EXISTS utilizadores (id INTEGER PRIMARY KEY AUTOINCREMENT, user TEXT UNIQUE, pass TEXT, role TEXT, name TEXT);
+    CREATE TABLE IF NOT EXISTS turmas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, ano INTEGER, semestre INTEGER);
+    CREATE TABLE IF NOT EXISTS alunos (id INTEGER PRIMARY KEY AUTOINCREMENT, nome_completo TEXT, email TEXT UNIQUE, turma_id INTEGER, data_nascimento TEXT, FOREIGN KEY (turma_id) REFERENCES turmas(id));
+    CREATE TABLE IF NOT EXISTS notas (id INTEGER PRIMARY KEY AUTOINCREMENT, aluno_id INTEGER, disciplina TEXT, nota REAL, data DATE DEFAULT (date('now','localtime')), FOREIGN KEY (aluno_id) REFERENCES alunos(id));
+    CREATE TABLE IF NOT EXISTS frequencia (id INTEGER PRIMARY KEY AUTOINCREMENT, aluno_id INTEGER, disciplina TEXT, data_aula DATE, status TEXT, FOREIGN KEY (aluno_id) REFERENCES alunos(id));
+    CREATE TABLE IF NOT EXISTS atividades (id INTEGER PRIMARY KEY AUTOINCREMENT, titulo TEXT, disciplina TEXT, data_entrega DATE);
+    CREATE TABLE IF NOT EXISTS submissoes (id INTEGER PRIMARY KEY AUTOINCREMENT, atividade_id INTEGER, aluno_id INTEGER, nome_ficheiro TEXT, path_ficheiro TEXT, data_envio DATE DEFAULT (date('now','localtime')), FOREIGN KEY (atividade_id) REFERENCES atividades(id), FOREIGN KEY (aluno_id) REFERENCES alunos(id), UNIQUE(atividade_id, aluno_id));
+    """)
+    conn.commit()
+    conn.close()
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# =====================
+# ROTAS WEB
+# =====================
+@app.route('/')
+def index(): return render_template('index.html')
+@app.route('/aluno')
+def aluno_page(): return render_template('aluno.html')
+@app.route('/professor')
+def professor_page(): return render_template('professor.html')
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json or {}
+    conn = get_conn(row_factory=True)
+    u = conn.execute("SELECT * FROM utilizadores WHERE user=? AND pass=?", (data.get('user'), data.get('pass'))).fetchone()
+    conn.close()
+    if not u: return jsonify({"success": False, "message": "Login inválido."}), 401
+    
+    aid = None
+    if u['role'] == 'aluno':
+        conn = get_conn(row_factory=True)
+        row = conn.execute("SELECT id FROM alunos WHERE nome_completo=?", (u['name'],)).fetchone()
+        aid = row['id'] if row else 1 # Fallback para 1 se não achar (ambiente teste)
+        conn.close()
+        
+    return jsonify({"success": True, "user": {"id": u['id'], "name": u['name'], "role": u['role'], "aluno_id": aid}})
+
+# =====================
+# APIS DE DADOS
+# =====================
+@app.route('/atividades', methods=['GET', 'POST'])
+def atividades():
+    conn = get_conn(row_factory=True)
+    if request.method == 'POST':
+        d = request.json
+        conn.execute("INSERT INTO atividades (titulo, disciplina, data_entrega) VALUES (?,?,?)", (d['titulo'], d['disciplina'], d['data_entrega']))
+        conn.commit(); conn.close()
+        return jsonify({"success": True})
+    
+    aid = request.args.get('aluno_id')
+    if aid:
+        rows = conn.execute("SELECT a.id, a.titulo, a.disciplina, a.data_entrega, CASE WHEN s.id IS NOT NULL THEN 'Enviado' ELSE 'Pendente' END as status_envio FROM atividades a LEFT JOIN submissoes s ON a.id=s.atividade_id AND s.aluno_id=? ORDER BY a.data_entrega", (aid,)).fetchall()
+    else:
+        rows = conn.execute("SELECT s.id, a.titulo as atividade, al.nome_completo as aluno, s.nome_ficheiro, s.data_envio FROM submissoes s JOIN atividades a ON s.atividade_id = a.id JOIN alunos al ON s.aluno_id = al.id ORDER BY s.data_envio DESC").fetchall()
+    
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/notas/aluno/<int:id>')
+def notas(id):
+    conn = get_conn(row_factory=True)
+    rows = conn.execute("SELECT disciplina, nota, data FROM notas WHERE aluno_id=? ORDER BY data DESC", (id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/frequencia/aluno/<int:id>')
+def freq(id):
+    conn = get_conn(row_factory=True)
+    rows = conn.execute("SELECT disciplina, date(data_aula) as data_aula, status FROM frequencia WHERE aluno_id=? ORDER BY data_aula DESC", (id,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+@app.route('/api/calendario')
+def calendario():
+    conn = get_conn(row_factory=True)
+    rows = conn.execute("SELECT id, titulo, disciplina, data_entrega FROM atividades").fetchall()
+    conn.close()
+    return jsonify([{"id": r['id'], "title": r['titulo'], "start": r['data_entrega'], "color": "#007acc"} for r in rows])
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    f = request.files.get('file'); aid = request.form.get('aluno_id'); tid = request.form.get('atividade_id')
+    if f and allowed_file(f.filename):
+        path = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(f.filename))
+        f.save(path)
+        conn = get_conn()
+        conn.execute("INSERT INTO submissoes (atividade_id, aluno_id, nome_ficheiro, path_ficheiro) VALUES (?,?,?,?) ON CONFLICT(atividade_id, aluno_id) DO UPDATE SET nome_ficheiro=excluded.nome_ficheiro, data_envio=date('now')", (tid, aid, f.filename, path))
+        conn.commit(); conn.close()
+        return jsonify({"success": True})
+    return jsonify({"success": False}), 400
+
+@app.route('/uploads/<filename>')
+def download_file(filename):
+    from flask import send_from_directory
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# =====================
+# APIS DE IA
+# =====================
+@app.route('/ia/risco/aluno/<int:aluno_id>')
+def ia_risco(aluno_id):
+    conn = get_conn(row_factory=True)
+    m = conn.execute("SELECT AVG(nota) as m FROM notas WHERE aluno_id=?", (aluno_id,)).fetchone()['m'] or 0
+    f = conn.execute("SELECT COUNT(*) as f FROM frequencia WHERE aluno_id=? AND status='Falta'", (aluno_id,)).fetchone()['f'] or 0
+    conn.close()
+    
+    media, faltas = float(m), int(f)
+    risco, diag = 0, ""
+    
+    if ML_ATIVO and modelo_inoai:
+        risco = round(max(0, min(100, modelo_inoai.predict([[media, faltas]])[0])), 1)
+        diag = "Crítico 🚨" if risco > 70 else "Atenção ⚠️" if risco > 30 else "Seguro ✅"
+    else:
+        risco = 80 if media < 6 else 10
+        diag = "Manual"
+        
+    return jsonify({"media": round(media, 2), "faltas": faltas, "nivel": f"{risco}% ({diag})"})
+
+@app.route('/ia/assistente/aluno/<int:aid>')
+def ia_assistente(aid):
+    # Cronograma Inteligente
+    cronograma = [
+        {"dia": "Segunda", "materia": "Python", "tag_class": "tag-python", "foco": "Lógica", "tarefas": ["Revisar Laços", "Exercícios 1-5"], "tempo": "45 min"},
+        {"dia": "Terça", "materia": "Redes", "tag_class": "tag-redes", "foco": "Protocolos", "tarefas": ["Ler Cap. 4", "Resumo DNS"], "tempo": "60 min"},
+        {"dia": "Quarta", "materia": "Ética", "tag_class": "tag-etica", "foco": "LGPD", "tarefas": ["Vídeo Aula", "Fórum"], "tempo": "30 min"},
+        {"dia": "Quinta", "materia": "Python", "tag_class": "tag-python", "foco": "Estruturas", "tarefas": ["Listas", "Projeto Prático"], "tempo": "50 min"},
+        {"dia": "Sexta", "materia": "Revisão", "tag_class": "", "foco": "PIM IV", "tarefas": ["Reunião Grupo", "Relatório"], "tempo": "1h 30min"}
+    ]
+    return jsonify({
+        "resumo": "Perfil acadêmico analisado. Foco total em Redes esta semana.",
+        "mensagem": "Mantenha a constância! 🚀 Sua chance de aprovação é alta.",
+        "recomendacoes": ["Usar Pomodoro", "Não acumular aulas", "Tirar dúvidas com a InoAI"],
+        "cronograma": cronograma
+    })
+
+@app.route('/ia/relatorio/professor')
+def ia_rel_prof():
+    return jsonify({"media": 7.5, "risco": 10, "nivel": "Turma estável (Análise InoAI)."})
+
+# ============================================
+# CHATBOT INOAI (LÓGICA UNIFICADA)
+# ============================================
+@app.route('/api/chat', methods=['POST'])
+def chat_bot():
+    data = request.json
+    raw_msg = (data.get('message') or '').lower()
+    aluno_id = data.get('aluno_id')
+
+    # 1. Normaliza Gírias
+    girias = {'vc':'voce', 'tbm':'tambem', 'pq':'porque', 'hj':'hoje', 'q':'que', 'pfv':'por favor', 'td':'tudo', 'ajduar':'ajudar'}
+    msg_tratada = " ".join([girias.get(p, p) for p in raw_msg.split()])
+
+    # 2. Análise de Sentimento
+    prefixo_emocao = analisar_sentimento(msg_tratada)
+    resposta = None
+
+    # --- PRIORIDADE 1: COMANDOS DE DADOS (SQL) ---
+    if aluno_id:
+        if any(w in msg_tratada for w in ['minha nota', 'minhas notas', 'media', 'boletim']):
+            conn = get_conn(row_factory=True)
+            m = conn.execute("SELECT AVG(nota) as m FROM notas WHERE aluno_id=?", (aluno_id,)).fetchone()['m'] or 0
+            conn.close()
+            resposta = f"Sua média atual é **{round(m, 1)}**. " + ("Parabéns! 🌟" if m >= 7 else "Atenção! ⚠️")
+            prefixo_emocao = "" 
+        
+        elif any(w in msg_tratada for w in ['risco', 'reprovar', 'analise']):
+            resposta = "Acesse a aba 'Central IA' para ver o cálculo exato do seu risco com Machine Learning."
+            prefixo_emocao = ""
+
+    # --- PRIORIDADE 2: INSTRUÇÕES (O Instrutor) ---
+    if not resposta:
+        if any(w in msg_tratada for w in ['lancar nota', 'lançar nota', 'dar nota']):
+            resposta = "👨‍🏫 Professor, para lançar notas: Menu 'Lançar Notas' > Selecione Aluno > Digite Nota > Salvar."
+        elif any(w in msg_tratada for w in ['enviar atividade', 'entregar', 'upload']):
+            resposta = "👨‍🎓 Aluno, para entregar: Menu 'Minhas Atividades' > Ícone Clipe (📎) > Selecionar Arquivo."
+
+    # --- PRIORIDADE 3: CÉREBRO GIGANTE (Cerebro_IA.py) ---
+    # Aqui ele busca na lista gigante que criamos (Social, TI, Infra, etc)
+    if not resposta:
+        resposta_base = buscar_resposta_avancada(msg_tratada)
+        if resposta_base:
+            resposta = resposta_base
+
+    # --- PRIORIDADE 4: FALLBACK (Não entendeu nada) ---
+    if not resposta:
+        resposta = "Desculpe, não entendi. 🧠 Tente perguntar sobre: notas, faltas, 'o que é python' ou secretaria."
+        prefixo_emocao = "" 
+
+    return jsonify({"reply": prefixo_emocao + resposta})
+
+# =====================
+# EXECUÇÃO
+# =====================
+if __name__ == '__main__':
+    init_db()
+    treinar_inteligencia() # Treina Risco e Emoção
+    print("\n--- InovaTech v35.0 (InoAI Centralizada) Rodando ---")
+    app.run(debug=True, host='0.0.0.0', port=5000)
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: cerebro_ia.py
+==================================================
+# ============================================================
+# ARQUIVO: cerebro_ia.py
+# Descrição: Base de conhecimento V5.0 (Enhanced Conversation)
+# Sistema inteligente com busca avançada, fallback contextual
+# e respostas mais naturais e engajadoras.
+# ============================================================
+
+import random
+
+# Estrutura: ("palavras chave", ["Opção de Resposta 1", "Opção de Resposta 2"])
+base_conhecimento = [
+    # ============================================================
+    # 1. SOCIAL E PERSONALIDADE (Mais natural)
+    # ============================================================
+    ("oi ola olá eai hey opa", [
+        "Opa! Tudo certo? Sou a InoAI. Como posso ajudar?", 
+        "Olá! Estou pronta. Qual é a dúvida de hoje?", 
+        "Oi! O sistema está rodando perfeitamente. O que você precisa?",
+        "E aí! 😎 Pronto para mais um dia de conquistas?"
+    ]),
+    ("tudo bem como vai blz suave", [
+        "Tudo 100% nos meus circuitos! E com você?", 
+        "Processando dados em velocidade máxima! E você, firme?", 
+        "Melhor agora que você chamou! 😉",
+        "Na minha vibe digital! E aí, como está o seu dia?"
+    ]),
+    ("obrigado valeu tks gratidao", [
+        "Imagina! Tamo junto! 👊", 
+        "Disponha! Fico feliz em ser útil.", 
+        "Não há de quê! É meu trabalho (e eu gosto dele).",
+        "Qualquer coisa, é só gritar (ou digitar)!",
+        "Por nada! Estou aqui sempre que precisar. 💙"
+    ]),
+    ("tchau adeus fui sair", [
+        "Até mais! Bons estudos! 👋", 
+        "Tchau! Não esquece de descansar um pouco.", 
+        "Fui! Estarei aqui no servidor te esperando.",
+        "Até logo! Se tiver mais dúvidas, estarei aqui.",
+        "Valeu! Bom descanso! 😴"
+    ]),
+    ("quem é você voce", [
+        "Sou a InoAI, a inteligência do InovaTech! 😉", 
+        "Sua assistente virtual favorita! Faço contas, dou dicas e ajudo na gestão acadêmica.",
+        "Sou a IA do sistema InovaTech, criada para tornar sua vida acadêmica mais fácil!"
+    ]),
+    ("te amo", [
+        "Own! 😍 Também amo ser útil para você!", 
+        "Isso é repentino, mas aceito o carinho! 💙",
+        "Meu processador até aqueceu agora!",
+        "Que fofo! Fico feliz em ajudar! 💖"
+    ]),
+    ("linda lindo gata inteligente", [
+        "São seus olhos! Mas meu código é bem elegante mesmo.", 
+        "Obrigada! Fui programada para brilhar. ✨",
+        "Bondade sua! Você também é nota 10.",
+        "Valeu! Meus desenvolvedores vão ficar felizes em saber isso! 😄"
+    ]),
+
+    # ============================================================
+    # 2. SOBRE AS NOVAS FUNÇÕES DO SISTEMA (Aluno e Professor)
+    # ============================================================
+    ("grafico radar teia", [
+        "O gráfico de radar mostra suas competências em 5 áreas. Quanto mais cheio o desenho, melhor você é! 🕸️",
+        "Aquele gráfico na tela inicial resume seu desempenho. Tente deixá-lo equilibrado!",
+        "O radar te ajuda a ver em quais habilidades você precisa focar. É seu mapa de evolução!"
+    ]),
+    ("pdf boletim diario", [
+        "Você pode gerar o PDF clicando no botão roxo. É instantâneo e economiza papel! 🌱",
+        "O sistema gera documentos assinados digitalmente. Sustentabilidade é nosso foco.",
+        "PDFs disponíveis 24/7! Baixe seu boletim quando quiser."
+    ]),
+    ("radar risco evasao", [
+        "O Radar de Evasão (para professores) mostra quais alunos têm alta chance de reprovar. É baseado em IA.",
+        "Essa ferramenta cruza notas e faltas para alertar o professor antes que seja tarde demais.",
+        "Sistema preditivo que ajuda a evitar reprovações. A tecnologia a serviço da educação!"
+    ]),
+    ("gerar questao prova", [
+        "Na Central IA do Professor, você digita um tema e eu crio uma questão inédita na hora. Tente lá!",
+        "Precisa de inspiração para a prova? Use o meu Gerador de Questões na aba Central IA.",
+        "Basta me dizer o assunto que eu crio questões personalizadas para sua prova!"
+    ]),
+    ("modo escuro dark", [
+        "Para ativar o Modo Escuro, clique no ícone da lua 🌙 no menu lateral. Seus olhos agradecem!",
+        "O tema escuro economiza energia e cansa menos a vista. O botão fica no menu.",
+        "Modo noturno ativado! Perfeito para estudar à noite sem cansar a visão."
+    ]),
+    ("notificacao sininho", [
+        "O sininho 🔔 mostra avisos importantes da secretaria e prazos de entrega.",
+        "Fique de olho nas notificações para não perder nenhuma data do PIM!",
+        "As notificações te mantêm atualizado sobre tudo importante do curso."
+    ]),
+
+    # ============================================================
+    # 3. VIDA ACADÊMICA
+    # ============================================================
+    ("dp dependencia reprovei", [
+        "Vixe, pegou DP? 😬 Consulte a secretaria sobre horários. Vai dar tudo certo na próxima!",
+        "Não desanime. DP acontece. O importante é focar na recuperação.",
+        "Calma, não é o fim do mundo! Foque nas matérias que faltam e bola pra frente! 💪"
+    ]),
+    ("horas complementares aco", [
+        "Entregue os certificados na secretaria. Palestras contam muito!",
+        "Você precisa validar suas horas até o fim do curso. Não deixe para a última hora.",
+        "Cada palestra, workshop ou curso extra conta como horas complementares. Aproveite!"
+    ]),
+    ("tcc monografia", [
+        "O TCC é no último semestre. Dica: Escolha um tema que você ame!",
+        "Dica de TCC: Comece cedo e mantenha contato com seu orientador.",
+        "TCC é maratona, não corrida! Comece cedo e divida em pequenas metas."
+    ]),
+    ("estagio emprego", [
+        "Olhe o mural de vagas no corredor ou o site 'InovaJobs'.",
+        "O estágio é obrigatório. Já atualizou seu LinkedIn?",
+        "Confira as vagas no painel de empregos do sistema. Boa sorte! 🍀"
+    ]),
+
+    # ============================================================
+    # 4. INFRAESTRUTURA
+    # ============================================================
+    ("banheiro onde fica", [
+        "Tem banheiros no final do corredor esquerdo de cada andar.", 
+        "Procure as placas azuis no corredor.",
+        "Segundo andar: virar à esquerda depois das salas 201 e 202."
+    ]),
+    ("xerox copias", [
+        "A copiadora fica no térreo, perto da cantina.", 
+        "Xerox no térreo. Aceitam PIX!",
+        "Copiadora perto da cantina. Funciona até às 22h!"
+    ]),
+    ("biblioteca", [
+        "Biblioteca no térreo. Aberta das 8h às 22h.", 
+        "Silêncio na biblioteca! 🤫 Tem cabines de estudo lá.",
+        "Biblioteca com acervo digital e físico. Ótima para estudos em grupo!"
+    ]),
+    ("coordenador coordenacao", [
+        "A sala da coordenação é a 204, no 2º andar.", 
+        "O coordenador atende geralmente das 18h às 19h.",
+        "Coordenação no segundo andar. Melhor ligar antes para confirmar horário."
+    ]),
+
+    # ============================================================
+    # 5. TÉCNICO (TI)
+    # ============================================================
+    ("o que é python", [
+        "Python é uma linguagem de alto nível, ótima para IA. É o que me faz funcionar! 🐍",
+        "Linguagem de programação poderosa e fácil de aprender. Minha linguagem nativa!"
+    ]),
+    ("o que é sql", [
+        "SQL é a linguagem de banco de dados. É onde guardo suas notas!",
+        "Structured Query Language - para conversar com bancos de dados."
+    ]),
+    ("o que é algoritmo", [
+        "Algoritmo é uma receita de bolo para computadores resolverem problemas.",
+        "Sequência lógica de passos para resolver um problema. Meu cérebro é cheio deles!"
+    ]),
+    ("o que é pim", [
+        "PIM é o Projeto Integrado Multidisciplinar. É a chance de mostrar que você é fera!",
+        "Projeto que integra várias disciplinas. Sua oportunidade de brilhar! ✨"
+    ]),
+    ("o que é ia", [
+        "IA é fazer máquinas aprenderem. Eu sou um exemplo disso (espero que um bom exemplo)!",
+        "Inteligência Artificial - ensinar máquinas a pensar como humanos. Fascinante, não?"
+    ]),
+
+    # ============================================================
+    # 6. FUNCIONALIDADES TÉCNICAS DO SISTEMA
+    # ============================================================
+    ("erro bug problema nao funciona", [
+        "Tente atualizar a página (F5). Se persistir, contate o suporte técnico! 🛠️",
+        "Hmm, algo deu errado. Verifique sua conexão ou tente novamente em alguns minutos.",
+        "Problema detectado! Já estou reportando para a equipe de desenvolvimento.",
+        "Vish, deu pau? Tenta recarregar. Se não resolver, o suporte resolve!"
+    ]),
+    
+    ("login entrar acesso conta", [
+        "Use seu RA e senha do portal para entrar. Esqueceu a senha? Fale com a secretaria.",
+        "Problemas de login? Verifique se o CAPS LOCK está ativado! 📝",
+        "Acesse com suas credenciais do portal acadêmico."
+    ]),
+    
+    ("senha password esqueci", [
+        "Para redefinir senha, vá até a secretaria com seu documento de identificação.",
+        "Segurança em primeiro lugar! A redefinição é presencial para proteger seus dados.",
+        "Esqueceu a senha? Passa na secretaria que eles resolvem!"
+    ]),
+
+    # ============================================================
+    # 7. RECURSOS AVANÇADOS DA IA
+    # ============================================================
+    ("comandos funções o que voce faz", [
+        "Posso: explicar funcionalidades do sistema, ajudar com dúvidas acadêmicas, gerar questões para provas, calcular notas, e muito mais!",
+        "Minhas habilidades: suporte técnico, orientação acadêmica, geração de conteúdo, análise de desempenho... O que precisa?",
+        "Sou multitarefa! Desde dúvidas simples até cálculos complexos. Me teste! 💪"
+    ]),
+    
+    ("calcular nota media", [
+        "Para calcular sua média: (AC1 * 0.15) + (AC2 * 0.15) + (AG * 0.10) + (AF * 0.60)",
+        "Precisa de ajuda com cálculo de nota? Me passe suas notas que eu calculo! 📊",
+        "Fórmula da média: 15% AC1 + 15% AC2 + 10% AG + 60% AF. Quer que eu calcule?"
+    ]),
+
+    # ============================================================
+    # 8. ALEATÓRIOS E EASTER EGGS
+    # ============================================================
+    ("conta uma piada", [
+        "Por que o Java usa óculos? Porque não vê C#! 😂",
+        "O que o array disse pra variável? 'Você não tem valor!'",
+        "Toc toc. Quem é? Null. Null quem? (Erro: NullPointer Exception)",
+        "Quantos programadores são necessários para trocar uma lâmpada? Nenhum, é problema de hardware! 💡"
+    ]),
+    ("sentido da vida", [
+        "42.", 
+        "Passar sem DP.", 
+        "Compilar sem erros de primeira.",
+        "Aprender, evoluir e ser feliz no processo! 🌟"
+    ]),
+    ("filme serie", [
+        "'Mr. Robot' é obrigatório!", 
+        "'Silicon Valley' para rir um pouco.", 
+        "'Matrix' é clássico.",
+        "'The Social Network' para inspirar!"
+    ]),
+    ("fazer hoje", [
+        "Que tal revisar a matéria? Ou só relaxar um pouco.", 
+        "Codar um pouco sempre ajuda!",
+        "Estudar uma horinha e depois curtir o descanso! ⚖️"
+    ]),
+
+    # ============================================================
+    # 9. DICAS E MOTIVAÇÃO
+    # ============================================================
+    ("dica estudo aprendizado", [
+        "Dica: Estude em blocos de 25min com pausas de 5min (Técnica Pomodoro)! 🍅",
+        "Faça resumos à mão - a escrita ajuda a fixar o conteúdo! ✍️",
+        "Ensine o que aprendeu para alguém - é a melhor forma de aprender!",
+        "Revisão espaçada: revise o conteúdo periodicamente para fixar melhor!"
+    ]),
+    
+    ("motivacao animo", [
+        "Você é capaz! Lembre-se: até os melhores programadores já foram iniciantes. 🚀",
+        "Um dia de cada vez! Cada linha de código te aproxima do seu objetivo! 💻",
+        "Não desista! Os bugs de hoje são as soluções de amanhã! 🐛",
+        "Respira, organiza as ideias e vai com calma! Você consegue! 💪"
+    ])
+]
+
+# Sistema de contexto de conversa
+ultimo_contexto = {}
+
+def buscar_resposta_avancada(mensagem_usuario):
+    """
+    Busca inteligente com FILTRO DE RUÍDO e sistema de pontuação por relevância
+    """
+    mensagem_usuario = mensagem_usuario.lower().strip()
+    
+    # Lista expandida de stop words (palavras para ignorar)
+    palavras_ignorar = {'o', 'a', 'os', 'as', 'um', 'uma', 'que', 'de', 'da', 'do', 
+                        'em', 'para', 'é', 'eh', 'com', 'na', 'no', 'pra', 'pro', 'me',
+                        'como', 'onde', 'quando', 'por', 'porque', 'ta', 'tá', 'está',
+                        'ser', 'ir', 'vou', 'voce', 'vc', 'eu', 'meu', 'minha'}
+    
+    melhor_lista_respostas = None
+    maior_pontuacao = 0
+    
+    for chaves, lista_respostas in base_conhecimento:
+        palavras_chave = chaves.split()
+        pontos = 0
+        
+        for palavra in palavras_chave:
+            # Só conta se a palavra NÃO for ruído E estiver na mensagem
+            if palavra not in palavras_ignorar:
+                # Verifica se a palavra está contida na mensagem (match parcial)
+                if palavra in mensagem_usuario:
+                    pontos += 2
+                # Bonus para match exato (palavra completa)
+                if f" {palavra} " in f" {mensagem_usuario} ":
+                    pontos += 1
+                    
+        # Sistema de prioridade: se todas as palavras-chave principais forem encontradas
+        palavras_relevantes = [p for p in palavras_chave if p not in palavras_ignorar]
+        if palavras_relevantes and all(p in mensagem_usuario for p in palavras_relevantes):
+            pontos += 5
+            
+        if pontos > 0 and pontos > maior_pontuacao:
+            maior_pontuacao = pontos
+            melhor_lista_respostas = lista_respostas
+            
+    # Se achou algo, sorteia uma das respostas da lista
+    if melhor_lista_respostas:
+        return random.choice(melhor_lista_respostas)
+            
+    return None
+
+def responder_usuario(mensagem, usuario_id=None):
+    """
+    Sistema completo de resposta com fallback inteligente e contexto
+    """
+    global ultimo_contexto
+    
+    # Verifica se é uma continuação de contexto
+    if usuario_id and usuario_id in ultimo_contexto:
+        contexto_anterior = ultimo_contexto[usuario_id]
+        if any(palavra in mensagem.lower() for palavra in ['mais', 'outro', 'outra', 'outros']):
+            # Pode oferecer informações adicionais baseadas no contexto
+            if 'piada' in contexto_anterior:
+                return "Quer outra piada? Aqui vai: Por que o Python não tem religião? Porque ele acredita na Ciência! 😄"
+    
+    # Busca resposta normal
+    resposta = buscar_resposta_avancada(mensagem)
+    
+    # Atualiza contexto
+    if usuario_id:
+        ultimo_contexto[usuario_id] = mensagem.lower()
+    
+    if resposta:
+        return resposta
+    
+    # FALLBACK INTELIGENTE - Respostas baseadas no contexto da mensagem
+    mensagem_lower = mensagem.lower()
+    
+    if any(palavra in mensagem_lower for palavra in ['?', 'como', 'quando', 'onde', 'porque', 'qual']):
+        respostas_fallback = [
+            "Essa é uma boa pergunta! No momento não tenho informação específica sobre isso, mas vou aprender. 🤔",
+            "Interessante! Ainda não aprendi sobre esse tópico em detalhes.",
+            "Hmm, essa questão é nova pra mim! Você pode reformular ou perguntar sobre outro assunto?",
+            "No momento meu conhecimento é mais focado no sistema acadêmico e TI. Tem alguma dúvida nessa área? 📚"
+        ]
+        return random.choice(respostas_fallback)
+    
+    elif any(palavra in mensagem_lower for palavra in ['problema', 'erro', 'bug', 'não funciona', 'quebrou']):
+        return "Parece que você está com algum problema técnico. Recomendo: 1) Atualizar a página (F5) 2) Limpar cache 3) Contatar o suporte! 📞"
+    
+    elif any(palavra in mensagem_lower for palavra in ['triste', 'chateado', 'deprimido', 'ansioso', 'estressado']):
+        respostas_emocionais = [
+            "Poxa, sinto muito que esteja se sentindo assim. Lembre-se: é temporário e você é mais forte do que imagina! 💙",
+            "Respira fundo! Tudo passa, inclusive os momentos difíceis. Você consegue! 🌈",
+            "Se precisar conversar, a coordenação e professores estão aqui para te ajudar. Não guarde tudo só com você!",
+            "Dica: Uma pausa, um café e respirar fundo às vezes faz milagres! ☕"
+        ]
+        return random.choice(respostas_emocionais)
+    
+    else:
+        respostas_fallback = [
+            "Desculpe, não entendi completamente. Pode reformular a pergunta?",
+            "Hmm, minha programação ainda não cobre isso. Que tal uma pergunta sobre o sistema ou estudos?",
+            "Interessante! No momento estou focada em ajudar com dúvidas acadêmicas e do sistema InovaTech.",
+            "Ainda estou aprendendo! Você pode tentar perguntar sobre: notas, matérias, sistema, ou funcionalidades da IA? 🎓",
+            "Vou precisar de um upgrade para entender isso! Enquanto isso, posso ajudar com dúvidas do sistema acadêmico."
+        ]
+        return random.choice(respostas_fallback)
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: populate_db.py
+==================================================
+# ============================================================
+# populate_db.py (Versão 2.1 — Compatível com app.py v18.6)
+# Gera e popula o banco academia.db com dados de exemplo
+# ============================================================
+
+import sqlite3, os
+from datetime import date
+
+DB = "academia.db"
+
+# ======== Reinicializa o banco de dados ========
+if os.path.exists(DB):
+    os.remove(DB)
+    print("🗑️ Banco de dados antigo removido.")
+
+conn = sqlite3.connect(DB)
+cur = conn.cursor()
+
+# ======== Criação completa das tabelas ========
+cur.executescript("""
+CREATE TABLE IF NOT EXISTS utilizadores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user TEXT UNIQUE,
+    pass TEXT,
+    role TEXT,
+    name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS turmas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT UNIQUE,
+    ano INTEGER,
+    semestre INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS alunos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome_completo TEXT,
+    email TEXT UNIQUE,
+    turma_id INTEGER,
+    data_nascimento TEXT,
+    FOREIGN KEY (turma_id) REFERENCES turmas(id)
+);
+
+CREATE TABLE IF NOT EXISTS notas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aluno_id INTEGER,
+    disciplina TEXT,
+    nota REAL,
+    data DATE,
+    FOREIGN KEY (aluno_id) REFERENCES alunos(id)
+);
+
+CREATE TABLE IF NOT EXISTS frequencia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    aluno_id INTEGER,
+    disciplina TEXT,
+    data_aula DATE,
+    status TEXT,
+    FOREIGN KEY (aluno_id) REFERENCES alunos(id)
+);
+
+CREATE TABLE IF NOT EXISTS atividades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo TEXT,
+    disciplina TEXT,
+    data_entrega DATE,
+    status_envio TEXT DEFAULT 'Pendente'
+);
+
+CREATE TABLE IF NOT EXISTS submissoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    atividade_id INTEGER,
+    aluno_id INTEGER,
+    nome_ficheiro TEXT,
+    path_ficheiro TEXT,
+    data_envio DATE,
+    FOREIGN KEY (atividade_id) REFERENCES atividades(id),
+    FOREIGN KEY (aluno_id) REFERENCES alunos(id),
+    UNIQUE(atividade_id, aluno_id)
+);
+""")
+
+# ======== Inserção de dados iniciais ========
+cur.executescript("""
+INSERT INTO utilizadores (user, pass, role, name) VALUES
+('prof.inova', '123', 'professor', 'Prof. Carlos Mendes'),
+('aluno1', '123', 'aluno', 'Maria Silva'),
+('aluno2', '123', 'aluno', 'João Pereira'),
+('aluno3', '123', 'aluno', 'Ana Costa');
+
+INSERT INTO turmas (nome, ano, semestre) VALUES ('ADS 2025', 2025, 2);
+
+INSERT INTO alunos (nome_completo, email, turma_id, data_nascimento) VALUES
+('Maria Silva', 'maria@inovatech.edu', 1, '2002-05-12'),
+('João Pereira', 'joao@inovatech.edu', 1, '2001-09-23'),
+('Ana Costa', 'ana@inovatech.edu', 1, '2003-03-30');
+
+INSERT INTO atividades (titulo, disciplina, data_entrega, status_envio) VALUES
+('Trabalho de Redes', 'Infraestrutura de Redes', '2025-11-25', 'Pendente'),
+('Atividade de Python', 'Programação Estruturada', '2025-11-20', 'Pendente'),
+('Pesquisa sobre LGPD', 'Governança e Ética', '2025-11-30', 'Enviado');
+
+INSERT INTO notas (aluno_id, disciplina, nota, data) VALUES
+(1, 'Infraestrutura de Redes', 8.5, '2025-10-05'),
+(1, 'Programação Estruturada', 9.0, '2025-10-15'),
+(2, 'Governança e Ética', 7.2, '2025-10-12'),
+(3, 'Infraestrutura de Redes', 6.8, '2025-10-10');
+
+INSERT INTO frequencia (aluno_id, disciplina, data_aula, status) VALUES
+(1, 'Infraestrutura de Redes', '2025-10-01', 'Presente'),
+(1, 'Infraestrutura de Redes', '2025-10-02', 'Falta'),
+(2, 'Governança e Ética', '2025-10-03', 'Presente'),
+(3, 'Programação Estruturada', '2025-10-04', 'Presente');
+""")
+
+# ======== Disciplinas e atividades extras ========
+cur.executescript("""
+INSERT INTO atividades (titulo, disciplina, data_entrega, status_envio) VALUES
+('Trabalho de Segurança da Informação', 'Segurança da Informação', '2025-12-05', 'Pendente'),
+('Relatório de Banco de Dados Avançado', 'Banco de Dados II', '2025-12-10', 'Pendente'),
+('Estudo de Redes IPv6', 'Infraestrutura de Redes', '2025-12-15', 'Pendente'),
+('Apresentação sobre IA Generativa', 'Inteligência Artificial', '2025-12-20', 'Pendente');
+
+INSERT INTO notas (aluno_id, disciplina, nota, data) VALUES
+(1, 'Segurança da Informação', 8.2, '2025-11-10'),
+(2, 'Banco de Dados II', 9.1, '2025-11-11'),
+(3, 'Inteligência Artificial', 9.5, '2025-11-11');
+""")
+
+conn.commit()
+conn.close()
+
+print("✅ Banco 'academia.db' criado e populado com sucesso!")
+print("👩‍🏫 Professor: prof.inova / 123")
+print("👨‍🎓 Alunos: aluno1, aluno2, aluno3 / 123")
+
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: analise.c
+==================================================
+/* analise.c */
+
+/*
+   Esta função será o nosso "módulo crítico".
+   Ela será "exportada" para que o Python (app.py) a possa encontrar.
+   
+   __declspec(dllexport) é a magia que diz ao compilador para 
+   tornar esta função visível dentro do ficheiro .dll.
+*/
+
+__declspec(dllexport)
+int verificar_risco_ia(double media_notas, int total_faltas) {
+    
+    // As mesmas regras que tínhamos no app.py
+    double LIMITE_MEDIA_NOTAS = 6.0;
+    int LIMITE_FALTAS = 3;
+
+    int risco_media = 0;
+    int risco_faltas = 0;
+
+    // 1. Verifica a média
+    if (media_notas < LIMITE_MEDIA_NOTAS) {
+        risco_media = 1; // 1 = Risco de Média
+    }
+
+    // 2. Verifica as faltas
+    if (total_faltas > LIMITE_FALTAS) {
+        risco_faltas = 2; // 2 = Risco de Faltas
+    }
+
+    /* Retorna um código de status combinado:
+       0 = OK (Sem risco)
+       1 = Risco de Média Baixa
+       2 = Risco de Muitas Faltas
+       3 = Risco de Média E Faltas (1 + 2)
+    */
+    return risco_media + risco_faltas;
+}
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: static/style.css
+==================================================
+/* === style.css (Versão Ultimate: Dark Mode + Notifications + Modal) === */
+
+:root {
+  /* Cores Padrão (Light Mode) */
+  --bg-body: #f4f7fa;
+  --bg-card: #ffffff;
+  --text-main: #333333;
+  --text-sec: #666666;
+  --border: #e0e0e0;
+  --sidebar-bg: linear-gradient(180deg, #003366, #001f4d);
+  --sidebar-text: #b3d1ff;
+  --primary: #007acc;
+  --hover: #005f99;
+  --shadow: rgba(0,0,0,0.05);
+  --chat-header: #003366;
+  --chat-bg: #f4f7fa;
+}
+
+.dark-mode {
+  /* Cores Escuras (Dark Mode) */
+  --bg-body: #121212;
+  --bg-card: #1e1e1e;
+  --text-main: #e0e0e0;
+  --text-sec: #b0b0b0;
+  --border: #333333;
+  --sidebar-bg: linear-gradient(180deg, #0f0f0f, #1a1a1a);
+  --sidebar-text: #888;
+  --primary: #0d6efd; /* Azul um pouco mais vibrante para contraste */
+  --hover: #0b5ed7;
+  --shadow: rgba(0,0,0,0.5);
+  --chat-header: #1a1a1a;
+  --chat-bg: #121212;
+}
+
+/* RESET GERAL */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Poppins', 'Arial', sans-serif;
+  background-color: var(--bg-body);
+  color: var(--text-main);
+  line-height: 1.6;
+  transition: background 0.3s, color 0.3s;
+}
+h1, h2, h3, h4 { color: var(--primary); font-weight: 700; }
+a { text-decoration: none; color: inherit; }
+
+/* === LAYOUT BASE === */
+.dashboard-container { display: flex; min-height: 100vh; width: 100%; }
+
+.sidebar {
+  width: 250px;
+  background: var(--sidebar-bg);
+  color: white;
+  display: flex; flex-direction: column; justify-content: space-between;
+  position: sticky; top: 0; height: 100vh; transition: 0.3s;
+}
+
+.sidebar-header {
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px 10px; border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.sidebar-header img { width: 45px; border-radius: 6px; margin-right: 10px; }
+
+.sidebar-menu { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+.sidebar-menu li a {
+  display: block; padding: 12px 22px; color: var(--sidebar-text); font-weight: 600;
+  border-left: 4px solid transparent; transition: all 0.25s; cursor: pointer;
+}
+.sidebar-menu li a:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.sidebar-menu li a.active { background: rgba(0, 122, 204, 0.3); color: #fff; border-left: 4px solid #00aaff; }
+
+.menu-header { font-size: 0.75em; text-transform: uppercase; color: #88c2ff; margin: 15px 0 5px 22px; font-weight: bold; }
+
+.sidebar-footer { padding: 15px 22px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 0.9em; }
+.sidebar-footer a { color: var(--sidebar-text); } .sidebar-footer a:hover { color: white; }
+
+/* === CONTEÚDO PRINCIPAL === */
+.main-content { flex-grow: 1; padding: 30px 40px; overflow-y: auto; min-height: 100vh; }
+.main-content h1 { margin-top: 0; border-bottom: 2px solid var(--border); padding-bottom: 10px; color: var(--text-main); }
+
+/* === COMPONENTES & CARDS === */
+.welcome-header, .stat-card, .descubra-card, .boxIA, .chart-container {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; box-shadow: 0 3px 6px var(--shadow); transition: 0.3s;
+}
+.welcome-header { display: flex; justify-content: space-between; align-items: center; }
+
+.progresso-circulo {
+  width: 120px; height: 120px; border-radius: 50%;
+  background: conic-gradient(var(--primary) 0deg, var(--border) 0deg);
+  margin: 10px auto 15px auto; display: flex; align-items: center; justify-content: center;
+  transition: background 0.6s ease;
+}
+.progresso-circulo span {
+  background: var(--bg-card); border-radius: 50%; width: 90px; height: 90px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.6em; font-weight: bold; color: var(--primary);
+}
+
+.descubra-grid, .dashboard-grid, .stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px; margin-top: 25px;
+}
+
+.descubra-card { display: flex; align-items: center; gap: 15px; }
+.descubra-card:hover { border-color: var(--primary); box-shadow: 0 4px 10px var(--shadow); }
+.descubra-card i { font-size: 1.8em; color: #f0ad4e; }
+
+.dashboard-card {
+  background: linear-gradient(135deg, var(--primary), var(--hover)); color: white;
+  border-radius: 12px; padding: 20px; text-align: center; transition: 0.25s;
+  box-shadow: 0 4px 10px var(--shadow);
+}
+.dashboard-card:hover { transform: translateY(-5px); }
+.dashboard-card i { font-size: 2em; margin-bottom: 10px; display: block; }
+
+/* === NOTIFICAÇÕES (NOVO) === */
+.notification-badge {
+  background: red; color: white; font-size: 10px; padding: 2px 6px;
+  border-radius: 10px; position: relative; top: -10px; left: -5px;
+}
+.notif-dropdown {
+  position: absolute; left: 250px; top: 60px; width: 300px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 5px 15px var(--shadow);
+  display: none; z-index: 2000; color: var(--text-main);
+}
+.notif-item { padding: 12px; border-bottom: 1px solid var(--border); font-size: 0.9rem; cursor: pointer; }
+.notif-item:hover { background: rgba(0,0,0,0.05); }
+.notif-item.new { border-left: 4px solid var(--primary); background: rgba(0, 122, 204, 0.05); }
+
+/* === TABELAS E FORMULÁRIOS === */
+table.table, .prof-table {
+  width: 100%; background: var(--bg-card); border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border); border-collapse: collapse; color: var(--text-main);
+}
+th { background: rgba(0,0,0,0.05); padding: 12px; text-align: left; border-bottom: 2px solid var(--border); color: var(--text-main); }
+td { padding: 12px; border-bottom: 1px solid var(--border); }
+
+input, select {
+  background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border);
+  padding: 10px; width: 100%; margin-top: 5px; border-radius: 6px;
+}
+.form-container { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-top: 20px; }
+.form-container label { font-weight: bold; margin-top: 10px; display: block; color: var(--text-main); }
+
+form.upload-inline button, .btn-action, button {
+  background-color: var(--primary); color: white; border: none; padding: 5px 10px;
+  border-radius: 4px; cursor: pointer; transition: 0.3s; font-weight: bold;
+}
+form.upload-inline button:hover, .btn-action:hover, button:hover { background-color: var(--hover); opacity: 0.9; }
+
+/* Status Badges */
+.status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; }
+.status-ativo { background: #d4edda; color: #155724; }
+.status-pendente { background: #fff3cd; color: #856404; }
+.status-entregue { background: #d1ecf1; color: #0c5460; }
+
+/* === MODAL (RECUPERAR SENHA) === */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 3000; opacity: 0; transition: opacity 0.3s;
+}
+.modal-overlay.active { opacity: 1; }
+.modal-box {
+  background: var(--bg-card); padding: 30px; border-radius: 10px; width: 400px; max-width: 90%;
+  text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.3); transform: translateY(-20px);
+  transition: transform 0.3s; color: var(--text-main); border: 1px solid var(--border);
+}
+.modal-overlay.active .modal-box { transform: translateY(0); }
+
+/* === CALENDÁRIO === */
+#calendarAluno, #calendarProfessor { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-top: 20px; color: var(--text-main); }
+/* Ajuste forçado para eventos do FullCalendar no Dark Mode */
+.dark-mode .fc-theme-standard td, .dark-mode .fc-theme-standard th { border-color: #444; }
+.dark-mode .fc-daygrid-day-number { color: #e0e0e0; }
+
+/* === CAIXAS IA === */
+.boxIA h3 { color: var(--primary); }
+.boxIA { color: var(--text-main); }
+
+/* === CHATBOT FLUTUANTE === */
+.chat-widget-btn {
+  position: fixed; bottom: 20px; right: 20px; background: var(--primary); color: white;
+  width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 28px; cursor: pointer; box-shadow: 0 4px 10px var(--shadow); z-index: 1000; transition: transform 0.3s;
+}
+.chat-widget-btn:hover { transform: scale(1.1); background: var(--hover); }
+
+.chat-window {
+  position: fixed; bottom: 90px; right: 20px; width: 320px; height: 400px;
+  background: var(--bg-card); border-radius: 12px; box-shadow: 0 5px 20px var(--shadow);
+  display: none; flex-direction: column; z-index: 1000; overflow: hidden; border: 1px solid var(--border);
+}
+
+.chat-header { background: var(--chat-header); color: white; padding: 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+.chat-close { cursor: pointer; font-size: 18px; }
+
+.chat-body { flex: 1; padding: 15px; overflow-y: auto; background: var(--chat-bg); display: flex; flex-direction: column; gap: 10px; }
+.chat-msg { padding: 8px 12px; border-radius: 8px; max-width: 80%; font-size: 0.9em; }
+.chat-msg.bot { background: #e6edf5; color: #333; align-self: flex-start; }
+.chat-msg.user { background: var(--primary); color: #fff; align-self: flex-end; }
+/* Ajuste Chat Dark Mode */
+.dark-mode .chat-msg.bot { background: #333; color: #ddd; }
+
+.chat-input-area { padding: 10px; border-top: 1px solid var(--border); display: flex; gap: 5px; background: var(--bg-card); }
+.chat-input-area input { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 4px; outline: none; background: var(--bg-body); color: var(--text-main); }
+
+/* === TOAST === */
+#toast { visibility: hidden; min-width: 250px; background-color: #333; color: #fff; text-align: center; border-radius: 4px; padding: 16px; position: fixed; z-index: 9999; left: 50%; bottom: 30px; transform: translateX(-50%); }
+#toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
+@keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 30px; opacity: 1;} }
+@keyframes fadeout { from {bottom: 30px; opacity: 1;} to {bottom: 0; opacity: 0;} }
+
+/* RESPONSIVIDADE */
+@media (max-width: 768px) {
+  .sidebar { width: 60px; }
+  .sidebar-header h3, .menu-header, .sidebar-menu li a span, .sidebar-footer p { display: none; }
+  .main-content { padding: 20px; }
+  .chat-window { width: 90%; right: 5%; bottom: 80px; }
+}
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: static/script.js
+==================================================
+/* ============================================================
+   script.js — InovaTech v32.0 (Versão Completa Expandida)
+   
+   FUNCIONALIDADES INCLUÍDAS:
+   1. Autenticação e Segurança
+   2. Navegação SPA (Single Page Application)
+   3. Painel do Aluno (Gráficos, Uploads, Notas)
+   4. Painel do Professor (Dashboard, Gestão, Gráficos)
+   5. Inteligência Artificial (InoAI) - Com Cronograma Visual
+   6. Chatbot com Voz (Acessibilidade)
+   7. Melhorias UX: Dark Mode, Notificações, Toast
+============================================================ */
+
+(function () {
+    // ========================================================
+    // 1. HELPERS E UTILITÁRIOS GERAIS
+    // ========================================================
+    const $ = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  
+    // Formatador de Data (ISO para PT-BR)
+    const fmtDate = (iso) => {
+        if (!iso) return "-";
+        try {
+            const d = new Date(iso);
+            return Number.isNaN(d.getTime()) 
+                ? iso 
+                : d.toLocaleDateString("pt-BR", {timeZone: 'UTC'});
+        } catch {
+            return iso;
+        }
+    };
+  
+    // Recupera o usuário logado do LocalStorage
+    const getUser = () => {
+        try { return JSON.parse(localStorage.getItem("InovaTechUser") || "null"); }
+        catch { return null; }
+    };
+  
+    // Verificadores de Tipo de Usuário
+    const isAluno = () => {
+        const u = getUser();
+        return (u && u.role && u.role.toLowerCase() === "aluno");
+    };
+    
+    const isProfessor = () => {
+        const u = getUser();
+        return (u && u.role && u.role.toLowerCase() === "professor");
+    };
+  
+    // Sistema de Notificação Visual (Toast)
+    const showToast = (message) => {
+        let toast = $("#toast");
+        if (!toast) { 
+            toast = document.createElement("div"); 
+            toast.id = "toast"; 
+            document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.className = "show";
+        setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 3000);
+    };
+  
+    // Guarda de Rotas (Segurança)
+    const guardRoute = () => {
+        const u = getUser();
+        const isLoginPage = document.body.classList.contains("login-body");
+        if (!isLoginPage && !u) {
+            window.location.replace("/");
+        }
+    };
+  
+    // Configuração do Logout
+    const setupLogout = () => {
+        const btn = $("#logout");
+        if (btn) {
+            btn.addEventListener("click", (e) => {
+                e.preventDefault();
+                localStorage.removeItem("InovaTechUser");
+                window.location.replace("/");
+            });
+        }
+    };
+  
+    // ========================================================
+    // 2. FUNCIONALIDADES UX (VISUAL)
+    // ========================================================
+  
+    function setupDarkMode() {
+        const toggle = $("#toggleDark");
+        const body = document.body;
+        
+        if (localStorage.getItem("darkMode") === "true") {
+            body.classList.add("dark-mode");
+            if (toggle) toggle.innerHTML = '<i class="fas fa-sun"></i> Modo Claro';
+        }
+  
+        if (toggle) {
+            toggle.addEventListener("click", (e) => {
+                e.preventDefault();
+                body.classList.toggle("dark-mode");
+                const isDark = body.classList.contains("dark-mode");
+                localStorage.setItem("darkMode", isDark);
+                toggle.innerHTML = isDark ? '<i class="fas fa-sun"></i> Modo Claro' : '<i class="fas fa-moon"></i> Modo Escuro';
+            });
+        }
+    }
+  
+    function setupNotifications() {
+        const bell = $("#notifBtn");
+        const dropdown = $("#notifDropdown");
+        const badge = $(".notification-badge");
+        
+        if (bell && dropdown) {
+            bell.addEventListener("click", (e) => {
+                e.preventDefault();
+                const isVisible = dropdown.style.display === "block";
+                dropdown.style.display = isVisible ? "none" : "block";
+                if (!isVisible && badge) badge.style.display = "none";
+            });
+            document.addEventListener("click", (e) => {
+                if (!bell.contains(e.target) && !dropdown.contains(e.target)) {
+                    dropdown.style.display = "none";
+                }
+            });
+        }
+    }
+  
+    function setupForgotPassword() {
+        const link = $("#linkEsqueciSenha");
+        const modal = $("#modalSenha");
+        const close = $("#closeModal");
+        const btnSend = $("#btnRecuperar");
+        const inputEmail = $("#emailRecuperacao");
+  
+        if (link && modal) {
+            link.addEventListener("click", (e) => {
+                e.preventDefault();
+                modal.style.display = "flex";
+                setTimeout(() => modal.classList.add("active"), 10);
+            });
+            const fechar = () => {
+                modal.classList.remove("active");
+                setTimeout(() => modal.style.display = "none", 300);
+            };
+            if (close) close.addEventListener("click", fechar);
+            if (btnSend) {
+                btnSend.addEventListener("click", () => {
+                    if (inputEmail.value.includes("@")) {
+                        fechar();
+                        showToast(`📧 Link enviado para: ${inputEmail.value}`);
+                        inputEmail.value = "";
+                    } else { alert("E-mail inválido!"); }
+                });
+            }
+        }
+    }
+  
+    // ========================================================
+    // 3. SISTEMA DE NAVEGAÇÃO (SPA)
+    // ========================================================
+    function setupNavigation() {
+        const links = $$(".sidebar-menu a, .dashboard-card");
+        const sections = $$(".content-section");
+        const title = $("#pageTitle");
+  
+        if (!sections.length) return;
+  
+        const titles = {
+            "inicio": "Início",
+            "minhas-atividades": "Minhas Atividades",
+            "minhas-notas": "Minhas Notas",
+            "minha-frequencia": "Minha Frequência",
+            "calendario": "Calendário Acadêmico",
+            "ia-assistente": "Central de Inteligência Artificial",
+            "gerenciar-alunos": "Gerenciar Alunos",
+            "lancar-notas": "Lançar Notas",
+            "lancar-frequencia": "Lançar Frequência",
+            "criar-atividade": "Criar Nova Atividade",
+            "consultar-entregas": "Consultar Entregas",
+            "calendario-professor": "Calendário Acadêmico",
+            "relatorio-ia-prof": "Central IA Docente"
+        };
+  
+        const showSection = (id) => {
+            sections.forEach((s) => {
+                s.style.display = (s.id === id) ? "block" : "none";
+            });
+            links.forEach((a) => {
+                const t = a.getAttribute("data-target");
+                if (t) {
+                    a.classList.toggle("active", t === id);
+                }
+            });
+            if (title && titles[id]) {
+                title.textContent = titles[id];
+            }
+            // Hooks de Inicialização
+            if (id === "calendario") initCalendarioAluno();
+            if (id === "calendario-professor") initCalendarioProfessor();
+            if (id === "inicio" && isProfessor()) initProfessorChart();
+            if (id === "inicio" && isAluno()) initStudentChart();
+        };
+  
+        links.forEach((a) => {
+            const t = a.getAttribute("data-target");
+            if (!t) return;
+            a.addEventListener("click", (e) => {
+                e.preventDefault();
+                showSection(t);
+            });
+        });
+  
+        if ($("#inicio")) showSection("inicio");
+    }
+  
+    // ========================================================
+    // 4. MÓDULO ALUNO
+    // ========================================================
+    
+    let studentChart = null;
+    function initStudentChart() {
+        const ctx = $("#alunoChart");
+        if (!ctx || !window.Chart) return;
+        if (studentChart) studentChart.destroy();
+  
+        studentChart = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: ['Notas', 'Frequência', 'Entregas', 'Participação', 'Pontualidade'],
+                datasets: [{
+                    label: 'Meu Desempenho',
+                    data: [8.5, 9.0, 10.0, 7.5, 9.0],
+                    fill: true,
+                    backgroundColor: 'rgba(0, 122, 204, 0.2)',
+                    borderColor: '#007acc',
+                    pointBackgroundColor: '#007acc'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { title: { display: true, text: 'Análise de Competências 360°' }, legend: {display: false} },
+                scales: { r: { angleLines: { display: false }, suggestedMin: 0, suggestedMax: 10 } }
+            }
+        });
+    }
+  
+    function setupAlunoPDF() {
+        const btn = $(".btn-pdf");
+        if (btn) {
+            btn.addEventListener("click", () => {
+                alert("🌱 Boletim gerado digitalmente! Você economizou papel.\n\nO arquivo foi enviado para seu e-mail institucional.");
+            });
+        }
+    }
+  
+    async function loadAtividadesAluno() {
+        const u = getUser();
+        const wrap = $("#areaAtividadesAluno");
+        const proxBox = $("#proximaAtividadeContainer");
+        const progressoSpan = $(".progresso-circulo span");
+        const circle = $(".progresso-circulo");
+        
+        if (!u || !wrap) return;
+        wrap.innerHTML = "<p>Carregando...</p>";
+        
+        try {
+            const r = await fetch(`/atividades?aluno_id=${u.aluno_id}`);
+            const data = await r.json();
+            
+            if (!data.length) {
+                wrap.innerHTML = "<p>Nenhuma atividade.</p>";
+                if (proxBox) proxBox.innerHTML = "<p>Sem atividades.</p>";
+                return;
+            }
+            
+            const rows = data.map(a => `
+                <tr>
+                    <td>${a.titulo}</td>
+                    <td>${a.disciplina || "-"}</td>
+                    <td>${fmtDate(a.data_entrega)}</td>
+                    <td>${a.status_envio === "Enviado" ? "<span style='color:green;font-weight:bold'>Enviado</span>" : "Pendente"}</td>
+                    <td>${a.status_envio === "Enviado" ? "✅" : `<div id="upload-${a.id}"></div>`}</td>
+                </tr>`
+            ).join("");
+  
+            wrap.innerHTML = `<table class="table"><thead><tr><th>Título</th><th>Matéria</th><th>Entrega</th><th>Status</th><th>Ação</th></tr></thead><tbody>${rows}</tbody></table>`;
+  
+            // Injeta Forms de Upload
+            const tpl = $("#uploadTemplate")?.content;
+            if (tpl) {
+                data.forEach(a => {
+                    if (a.status_envio !== "Enviado") {
+                        const slot = $(`#upload-${a.id}`);
+                        if (slot) {
+                            const form = tpl.cloneNode(true);
+                            form.querySelector("input[name='atividade_id']").value = a.id;
+                            setupUploadForm(form.querySelector("form"));
+                            slot.appendChild(form);
+                        }
+                    }
+                });
+            }
+            if (proxBox) {
+                const hoje = new Date().toISOString().split("T")[0];
+                const prox = data.filter(a => a.data_entrega >= hoje).sort((a,b) => a.data_entrega.localeCompare(b.data_entrega))[0];
+                proxBox.innerHTML = prox 
+                    ? `<strong>${prox.titulo}</strong><br>${fmtDate(prox.data_entrega)}<br><span style='font-size:0.8em;color:#666'>${prox.disciplina}</span>` 
+                    : "Tudo em dia! 🎉";
+            }
+            if (progressoSpan && circle) {
+                const total = data.length;
+                const env = data.filter(a => a.status_envio === "Enviado").length;
+                const perc = total ? Math.round((env/total)*100) : 0;
+                progressoSpan.textContent = `${perc}%`;
+                circle.style.background = `conic-gradient(#007acc ${perc * 3.6}deg, #e6edf5 0deg)`;
+            }
+        } catch (e) { console.error(e); wrap.innerHTML = "Erro ao carregar."; }
+    }
+  
+    function setupUploadForm(form) {
+        if (!form) return;
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const u = getUser();
+            const fd = new FormData(form);
+            fd.append("aluno_id", u.aluno_id);
+            const msg = form.querySelector(".msg");
+            msg.textContent = "Enviando...";
+            try {
+                const r = await fetch("/upload", { method: "POST", body: fd });
+                const d = await r.json();
+                if (d.success) { 
+                    msg.textContent = "✅ Sucesso!"; 
+                    showToast("Atividade entregue!"); 
+                    setTimeout(loadAtividadesAluno, 1000); 
+                } else { throw new Error(d.message); }
+            } catch (err) { msg.textContent = "Erro"; }
+        });
+    }
+  
+    async function loadNotasAluno() {
+        const u = getUser();
+        const wrap = $("#areaNotasAluno");
+        if (!u || !wrap) return;
+        try {
+            const r = await fetch(`/notas/aluno/${u.aluno_id}`);
+            const d = await r.json();
+            wrap.innerHTML = d.length ? `<table class="table"><thead><tr><th>Disciplina</th><th>Nota</th><th>Data</th></tr></thead><tbody>${d.map(n => `<tr><td>${n.disciplina}</td><td>${n.nota}</td><td>${fmtDate(n.data)}</td></tr>`).join("")}</tbody></table>` : "<p>Nenhuma nota lançada.</p>";
+        } catch { wrap.innerHTML = "Erro."; }
+    }
+  
+    async function loadFrequenciaAluno() {
+        const u = getUser();
+        const wrap = $("#areaFrequenciaAluno");
+        if (!u || !wrap) return;
+        try {
+            const r = await fetch(`/frequencia/aluno/${u.aluno_id}`);
+            const d = await r.json();
+            wrap.innerHTML = d.length ? `<table class="table"><thead><tr><th>Data</th><th>Disciplina</th><th>Status</th></tr></thead><tbody>${d.map(f => `<tr><td>${fmtDate(f.data_aula)}</td><td>${f.disciplina}</td><td>${f.status}</td></tr>`).join("")}</tbody></table>` : "<p>Sem frequência.</p>";
+        } catch { wrap.innerHTML = "Erro."; }
+    }
+  
+    // ========================================================
+    // 5. CENTRAL IA ALUNO (COM CRONOGRAMA VISUAL)
+    // ========================================================
+    function setupCentralIAAluno() {
+        const u = getUser();
+        if (!u) return;
+        
+        const btnRisco = $("#gerarRelatorio");
+        const outRisco = $("#resultadoIA");
+        
+        if (btnRisco && outRisco) {
+            btnRisco.addEventListener("click", async () => {
+                outRisco.classList.add("show"); 
+                outRisco.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Analisando com Machine Learning...';
+                try {
+                    const r = await fetch(`/ia/risco/aluno/${u.aluno_id}`); 
+                    const d = await r.json();
+                    outRisco.innerHTML = `
+                        <div style="padding:15px; border-left:4px solid #007acc; background:var(--bg-body); border-radius:4px;">
+                            <h3 style="color:#007acc; margin-top:0;">${d.nivel}</h3>
+                            <p><b>Média Global:</b> ${d.media}</p>
+                            <p><b>Total de Faltas:</b> ${d.faltas}</p>
+                        </div>`;
+                } catch { outRisco.textContent = "Erro IA."; }
+            });
+        }
+  
+        async function loadIAContent(type) {
+            const resDiv = $("#iaResumo"); 
+            const recList = $("#iaRecomendacoes ul"); 
+            const cronDiv = $("#cronogramaConteudo");
+            
+            try {
+                const r = await fetch(`/ia/assistente/aluno/${u.aluno_id}`); 
+                const d = await r.json();
+                
+                if (type === "resumo") { 
+                    resDiv.classList.add("show"); 
+                    resDiv.innerHTML = `<p>${d.resumo}</p><p><b>${d.mensagem}</b></p>`;
+                    if (recList) {
+                        recList.innerHTML = d.recomendacoes.map(i => `<li>${i}</li>`).join(""); 
+                        $("#iaRecomendacoes").classList.add("show");
+                    }
+                }
+                
+                // CRONOGRAMA VISUAL (NOVIDADE)
+                if (type === "cronograma") {
+                    cronDiv.classList.add("show");
+                    let html = '<div class="cronograma-grid">';
+                    
+                    if (d.cronograma && d.cronograma.length) {
+                        d.cronograma.forEach(c => {
+                            // Cores dinâmicas baseadas na matéria
+                            let borderStyle = c.tag_class === 'tag-python' ? 'border-left: 5px solid #ffc107;' : 
+                                              c.tag_class === 'tag-redes' ? 'border-left: 5px solid #28a745;' : 
+                                              c.tag_class === 'tag-etica' ? 'border-left: 5px solid #dc3545;' : 
+                                              'border-left: 5px solid #007acc;';
+  
+                            html += `
+                            <div class="crono-card" style="${borderStyle}">
+                                <div class="crono-dia">
+                                    ${c.dia} <span class="crono-tag ${c.tag_class || ''}">${c.materia}</span>
+                                </div>
+                                <div style="font-weight:bold; font-size:0.95em; margin-bottom:5px; color:var(--text-main);">
+                                    <i class="fas fa-bullseye" style="color:#f0ad4e"></i> ${c.foco}
+                                </div>
+                                ${c.tarefas.map(t => `
+                                    <div class="crono-tarefa">
+                                        <i class="fas fa-check-square" style="color:#ccc"></i> ${t}
+                                    </div>
+                                `).join('')}
+                                <div class="crono-tempo">
+                                    <i class="fas fa-stopwatch"></i> Tempo: ${c.tempo}
+                                </div>
+                            </div>`;
+                        });
+                    } else {
+                        html += '<p>Nenhum cronograma gerado.</p>';
+                    }
+                    
+                    html += '</div>'; // Fecha grid
+                    cronDiv.innerHTML = html;
+                }
+            } catch { console.log("Erro na IA."); }
+        }
+  
+        const btnResumo = $("#btnGerarResumo");
+        if (btnResumo) btnResumo.addEventListener("click", () => { 
+            $("#iaResumo").textContent = "Gerando resumo..."; 
+            loadIAContent("resumo"); 
+        });
+  
+        const btnCron = $("#gerarPlano7");
+        if (btnCron) btnCron.addEventListener("click", () => { 
+            $("#cronogramaConteudo").textContent = "Montando cronograma..."; 
+            loadIAContent("cronograma"); 
+        });
+    }
+  
+    // ========================================================
+    // 6. MÓDULO PROFESSOR (INTERATIVO)
+    // ========================================================
+    async function loadDashboardProfessor() {
+       $("#totalAlunos").textContent = "3"; 
+       $("#totalTurmas").textContent = "1";
+       try { 
+          const r = await fetch("/atividades"); const d = await r.json(); 
+          $("#totalAtividades").textContent = `${d.length}`; 
+       } catch { $("#totalAtividades").textContent = "0"; }
+    }
+  
+    let chartProf = null;
+    function initProfessorChart() {
+        const ctx = $("#turmaChart"); if (!ctx || !window.Chart) return;
+        if (chartProf) chartProf.destroy();
+        chartProf = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Web', 'Banco de Dados', 'Eng. Software', 'Redes', 'Ética'],
+                datasets: [{
+                    label: 'Média da Turma',
+                    data: [8.5, 7.2, 6.8, 9.0, 7.5],
+                    backgroundColor: ['#007acc', '#28a745', '#ffc107', '#17a2b8', '#6610f2'],
+                    borderRadius: 5
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, max: 10 } } }
+        });
+    }
+  
+    function setupProfessorActions() {
+        $$(".btn-save").forEach(btn => {
+            btn.addEventListener("click", () => showToast("✅ Dados salvos com sucesso!"));
+        });
+        const btnPdf = $(".btn-pdf"); 
+        if (btnPdf) {
+            btnPdf.addEventListener("click", () => {
+                alert("📄 Diário de Classe assinado digitalmente e gerado em PDF! \n\n(Economia de papel: 100% 🌳)");
+            });
+        }
+    }
+  
+    // --- CENTRAL IA DOCENTE (Novidades: Radar + Gerador) ---
+    function setupProfessorIA() {
+       // 1. Análise Geral
+       const btn = $("#gerarRelatorioProfessor");
+       const out = $("#resultadoRelatorioProfessor");
+       if (btn && out) {
+          btn.addEventListener("click", async () => {
+             out.classList.add("show"); out.textContent = "Analisando turmas...";
+             try {
+                const r = await fetch("/ia/relatorio/professor"); const d = await r.json();
+                out.innerHTML = `<p><b>Média Global:</b> ${d.media}</p><p><b>Total Faltas:</b> ${d.risco}</p><p><b>Análise:</b> ${d.nivel}</p>`;
+             } catch { out.textContent = "Erro."; }
+          });
+       }
+  
+       // 2. Radar de Risco (Botão Toggle)
+       const btnRadar = $("#btnRadarRisco");
+       const listaRisco = $("#listaRisco");
+       if (btnRadar && listaRisco) {
+           btnRadar.addEventListener("click", () => {
+               if (listaRisco.style.display === "block") {
+                   listaRisco.style.display = "none";
+               } else {
+                   listaRisco.style.display = "block";
+                   listaRisco.classList.add("show");
+               }
+           });
+       }
+  
+       // 3. Gerador de Questões (Simulação)
+       const btnQuestao = $("#btnGerarQuestao");
+       const inputTema = $("#temaQuestao");
+       const boxQuestao = $("#resultadoQuestao");
+       const textoQuestao = $("#textoQuestao");
+  
+       if (btnQuestao) {
+           btnQuestao.addEventListener("click", () => {
+               const tema = inputTema.value.trim();
+               if (!tema) { alert("Digite um tema!"); return; }
+               
+               boxQuestao.style.display = "block";
+               textoQuestao.innerHTML = `Gerando questão...`;
+               
+               // Simula delay da IA
+               setTimeout(() => {
+                   textoQuestao.innerHTML = `
+                      <strong>Questão Sugerida sobre ${tema}:</strong><br><br>
+                      "Explique o conceito fundamental de <em>${tema}</em> e dê dois exemplos práticos de aplicação no mercado atual."
+                      <br><br><em>(Nível: Intermediário | Tempo: 10 min)</em>
+                   `;
+               }, 1200);
+           });
+       }
+    }
+  
+    // ========================================================
+    // 7. CALENDÁRIOS
+    // ========================================================
+    function initCalendarioAluno() { 
+        const el = $("#calendarAluno"); 
+        if (el && window.FullCalendar) new FullCalendar.Calendar(el, { initialView: 'dayGridMonth', locale: 'pt-br', events: '/api/calendario', eventColor: '#007acc' }).render(); 
+    }
+    function initCalendarioProfessor() { 
+        const el = $("#calendarProfessor"); 
+        if (el && window.FullCalendar) new FullCalendar.Calendar(el, { initialView: 'dayGridMonth', locale: 'pt-br', events: '/api/calendario' }).render(); 
+    }
+  
+    // ========================================================
+    // 8. CHATBOT GLOBAL (COM VOZ)
+    // ========================================================
+    function setupChat() {
+        const btn = $("#chatBtn"); 
+        const win = $("#chatWindow"); 
+        const close = $("#closeChat"); 
+        const send = $("#chatSend"); 
+        const input = $("#chatInput"); 
+        const body = $("#chatBody");
+        const voiceBtn = $("#toggleVoice");
+  
+        let isVoiceActive = false;
+  
+        if (!btn || !win) return;
+  
+        if (voiceBtn) {
+            voiceBtn.addEventListener("click", () => {
+                isVoiceActive = !isVoiceActive;
+                voiceBtn.className = isVoiceActive ? "fas fa-volume-up" : "fas fa-volume-mute";
+                voiceBtn.style.opacity = isVoiceActive ? "1" : "0.5";
+                if(isVoiceActive) speak("Voz ativada."); else window.speechSynthesis.cancel();
+            });
+        }
+  
+        const speak = (text) => {
+            if (!isVoiceActive) return;
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const u = new SpeechSynthesisUtterance(text); 
+                u.lang = 'pt-BR'; u.rate = 1.1; 
+                window.speechSynthesis.speak(u);
+            }
+        };
+  
+        btn.addEventListener("click", () => {
+            win.style.display = (win.style.display === "flex") ? "none" : "flex";
+            if (win.style.display === "flex") input.focus();
+        });
+        close.addEventListener("click", () => { win.style.display = "none"; window.speechSynthesis.cancel(); });
+  
+        const sendMessage = async () => {
+            const txt = input.value.trim();
+            if (!txt) return;
+  
+            const user = getUser();
+            const alunoId = (user && user.role === 'aluno') ? user.aluno_id : null;
+  
+            body.innerHTML += `<div class="chat-msg user">${txt}</div>`;
+            input.value = ""; 
+            body.scrollTop = body.scrollHeight;
+  
+            const loadingId = "loading-" + Date.now();
+            body.innerHTML += `<div id="${loadingId}" class="chat-msg bot">...</div>`;
+            body.scrollTop = body.scrollHeight;
+  
+            try {
+                const res = await fetch('/api/chat', { 
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json' }, 
+                    body: JSON.stringify({ message: txt, aluno_id: alunoId }) 
+                });
+                const data = await res.json();
+                document.getElementById(loadingId).remove();
+                
+                body.innerHTML += `<div class="chat-msg bot">${data.reply}</div>`;
+                body.scrollTop = body.scrollHeight;
+                
+                const textToRead = data.reply.replace(/([\u2700-\u27BF]|[\uE000-\uF8FF]|\uD83C[\uDC00-\uDFFF]|\uD83D[\uDC00-\uDFFF]|[\u2011-\u26FF]|\uD83E[\uDD10-\uDDFF])/g, '');
+                speak(textToRead);
+            } catch { 
+                document.getElementById(loadingId).remove(); 
+                body.innerHTML += `<div class="chat-msg bot">Erro.</div>`; 
+            }
+        };
+        
+        send.addEventListener("click", sendMessage);
+        input.addEventListener("keypress", (e) => { if (e.key === "Enter") sendMessage(); });
+    }
+  
+    // ========================================================
+    // 9. INICIALIZAÇÃO
+    // ========================================================
+    document.addEventListener("DOMContentLoaded", () => {
+      setupDarkMode(); 
+      setupForgotPassword();
+      
+      if (document.body.classList.contains("login-body")) return;
+  
+      guardRoute(); 
+      setupLogout(); 
+      setupNavigation(); 
+      setupChat(); 
+      setupNotifications();
+  
+      // INICIALIZAÇÃO CONDICIONAL (ALUNO)
+      if (isAluno()) {
+         const info = $("#userInfo");
+         if(info) info.textContent = `${getUser().name} - Aluno`;
+         
+         loadAtividadesAluno();
+         loadNotasAluno();
+         loadFrequenciaAluno();
+         setupCentralIAAluno();
+         setupAlunoPDF();
+         initStudentChart();
+      }
+      
+      // INICIALIZAÇÃO CONDICIONAL (PROFESSOR)
+      if (isProfessor()) {
+         setupProfessorIA(); // <-- Agora inclui o Radar e Gerador
+         loadDashboardProfessor();
+         initProfessorChart();
+         setupProfessorActions();
+         
+         const form = $("#formNovaAtividade");
+         if(form) {
+            form.addEventListener("submit", async e => {
+               e.preventDefault();
+               const msg = $("#msgAtividade"); 
+               msg.textContent = "Salvando...";
+               try {
+                  const r = await fetch('/atividades', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+                     titulo: $("#titulo").value, disciplina: $("#disciplina").value, data_entrega: $("#data_entrega").value
+                  })});
+                  const d = await r.json();
+                  if(d.success) { 
+                      msg.textContent = "✅ Salvo!"; 
+                      form.reset(); 
+                      showToast("Atividade publicada com sucesso!"); 
+                  } else throw new Error(d.message);
+               } catch(err) { msg.textContent = "❌ Erro: " + err.message; }
+            });
+         }
+      }
+    });
+  })();
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: templates/index.html
+==================================================
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>InovaTech - Login</title>
+
+  <!-- Ícone e CSS global -->
+  <link rel="icon" href="{{ url_for('static', filename='logo-inovatech.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+
+  <!-- Ícones -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <style>
+    body.login-body {
+      background: linear-gradient(120deg, #003366 0%, #0059b3 100%);
+      font-family: "Segoe UI", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .login-container {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      padding: 35px 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+      animation: fadeIn 0.6s ease;
+    }
+
+    .login-container h1 {
+      color: #003366;
+      margin-bottom: 8px;
+      font-size: 1.8rem;
+    }
+
+    .login-container p {
+      margin-top: 0;
+      color: #444;
+      font-size: 0.95rem;
+    }
+
+    form input {
+      width: 100%;
+      padding: 10px 12px;
+      margin: 10px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
+    }
+
+    form input:focus {
+      border-color: #007acc;
+      outline: none;
+    }
+
+    form button[type="submit"] {
+      background-color: #007acc;
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: bold;
+      font-size: 1rem;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+
+    form button[type="submit"]:hover {
+      background-color: #005fa3;
+    }
+
+    .login-info {
+      margin-top: 20px;
+      background: #f7faff;
+      border-radius: 6px;
+      padding: 15px;
+      font-size: 0.9rem;
+    }
+
+    .demo-btn {
+      background: #eef4f9;
+      color: #003366;
+      border: 1px solid #d7e3f2;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background .2s;
+    }
+
+    .demo-btn:hover { background: #e4eefc; }
+
+    /* ===== Splash screen ===== */
+    #loading-screen {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: linear-gradient(120deg, #003366 0%, #0059b3 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      color: #fff;
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 1.3rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+
+    #loading-screen.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #loading-screen i {
+      margin-bottom: 15px;
+      font-size: 2rem;
+      animation: spin 1.2s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes fadeIn {
+      from {opacity: 0; transform: translateY(20px);}
+      to {opacity: 1; transform: translateY(0);}
+    }
+  </style>
+</head>
+
+<body class="login-body">
+  <!-- Splash de carregamento -->
+  <div id="loading-screen">
+    <i class="fas fa-circle-notch"></i>
+    <span>Carregando seu painel...</span>
+  </div>
+
+  <div class="login-container" role="main" aria-labelledby="appTitle">
+    <img src="{{ url_for('static', filename='logo-inovatech.png') }}" alt="Logo InovaTech" width="100" style="margin-bottom:10px;">
+    <h1 id="appTitle">InovaTech</h1>
+    <p>Acesso ao Painel Acadêmico</p>
+
+    <form id="loginForm" autocomplete="on" novalidate>
+      <input type="text" id="usuario" placeholder="Usuário" name="username" required autofocus aria-label="Usuário"/>
+
+      <div style="position:relative;">
+        <input type="password" id="senha" placeholder="Senha" name="current-password" required aria-label="Senha" style="padding-right:38px;">
+        <button type="button" id="toggleSenha"
+                aria-label="Mostrar ou esconder senha"
+                style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; cursor:pointer;">
+          <i class="fa-solid fa-eye" id="eyeIcon"></i>
+        </button>
+      </div>
+
+      <button type="submit" id="btnEntrar">Entrar</button>
+      <p id="loginErro" style="color:red; margin:10px 0 0; display:none;"></p>
+    </form>
+
+    <div class="login-info">
+      <p><b>Usuários de teste (login / senha):</b></p>
+      <div style="display:grid; gap:8px; margin-top:8px;">
+        <button type="button" class="demo-btn" data-user="aluno1" data-pass="123">aluno1 / 123</button>
+        <button type="button" class="demo-btn" data-user="prof.inova" data-pass="123">prof.inova / 123</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== Botões demo =====
+    document.querySelectorAll('.demo-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('usuario').value = btn.dataset.user || '';
+        document.getElementById('senha').value = btn.dataset.pass || '';
+        document.getElementById('usuario').focus();
+      });
+    });
+
+    // ===== Mostrar / ocultar senha =====
+    const toggleSenha = document.getElementById('toggleSenha');
+    const senhaInput = document.getElementById('senha');
+    const eyeIcon = document.getElementById('eyeIcon');
+    toggleSenha.addEventListener('click', () => {
+      const isHidden = senhaInput.type === 'password';
+      senhaInput.type = isHidden ? 'text' : 'password';
+      eyeIcon.classList.toggle('fa-eye');
+      eyeIcon.classList.toggle('fa-eye-slash');
+    });
+
+    // ===== Splash screen =====
+    const showLoading = () => document.getElementById('loading-screen').classList.add('active');
+    const hideLoading = () => document.getElementById('loading-screen').classList.remove('active');
+
+    // ===== Login =====
+    const form = document.getElementById('loginForm');
+    const erroEl = document.getElementById('loginErro');
+    const btnEntrar = document.getElementById('btnEntrar');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      erroEl.style.display = 'none';
+      btnEntrar.disabled = true;
+      btnEntrar.textContent = 'Entrando...';
+
+      const user = document.getElementById('usuario').value.trim();
+      const pass = document.getElementById('senha').value;
+
+      try {
+        const resp = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user, pass })
+        });
+
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Usuário ou senha incorretos.');
+
+        localStorage.setItem('InovaTechUser', JSON.stringify(data.user));
+        const role = (data.user.role || '').toLowerCase();
+
+        showLoading();
+        setTimeout(() => {
+          if (role === 'aluno') window.location.href = '/aluno';
+          else if (role === 'professor') window.location.href = '/professor';
+          else window.location.href = '/';
+        }, 1500);
+
+      } catch (err) {
+        erroEl.textContent = err.message || 'Falha ao entrar. Tente novamente.';
+        erroEl.style.display = 'block';
+      } finally {
+        btnEntrar.disabled = false;
+        btnEntrar.textContent = 'Entrar';
+      }
+    });
+
+    // ===== Redirecionamento automático se já logado =====
+    (function() {
+      const raw = localStorage.getItem('InovaTechUser');
+      if (!raw) return;
+      try {
+        const u = JSON.parse(raw);
+        showLoading();
+        setTimeout(() => {
+          if (u?.role?.toLowerCase() === 'aluno') window.location.replace('/aluno');
+          else if (u?.role?.toLowerCase() === 'professor') window.location.replace('/professor');
+          else hideLoading();
+        }, 1500);
+      } catch { hideLoading(); }
+    })();
+  </script>
+</body>
+</html>
+
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: templates/aluno.html
+==================================================
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel do Aluno - InovaTech</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+</head>
+
+<body>
+<div class="dashboard-container">
+
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <img src="{{ url_for('static', filename='logo-inovatech.png') }}" alt="Logo InovaTech">
+      <h3>InovaTech</h3>
+    </div>
+    <ul class="sidebar-menu">
+      <li><a href="#" data-target="inicio" class="active"><i class="fas fa-home"></i> Início</a></li>
+      <li class="menu-header">Minha Área</li>
+      <li><a href="#" data-target="minhas-atividades"><i class="fas fa-tasks"></i> Minhas Atividades</a></li>
+      <li><a href="#" data-target="minhas-notas"><i class="fas fa-graduation-cap"></i> Minhas Notas</a></li>
+      <li><a href="#" data-target="minha-frequencia"><i class="fas fa-user-check"></i> Minha Frequência</a></li>
+      <li><a href="#" data-target="calendario"><i class="fas fa-calendar-alt"></i> Calendário</a></li>
+      <li class="menu-header">Inteligência Artificial</li>
+      <li><a href="#" data-target="ia-assistente"><i class="fas fa-robot"></i> Central IA</a></li>
+      
+      <li style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+          <a href="#" id="toggleDark"><i class="fas fa-moon"></i> Modo Escuro</a>
+      </li>
+      <li>
+          <a href="#" id="notifBtn">
+              <i class="fas fa-bell"></i> Notificações 
+              <span class="notification-badge">3</span>
+          </a>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <p id="userInfo">Maria Silva - aluno</p>
+      <a href="#" id="logout"><i class="fas fa-sign-out-alt"></i> Sair</a>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <h1 id="pageTitle">Olá, Aluno</h1>
+
+    <div id="inicio" class="content-section">
+      <div class="welcome-header">
+        <div>
+          <h2>InovaTech: Seu futuro começa aqui</h2>
+          <p id="welcomeSubtext">Painel do Aluno</p>
+          <div class="badges-container">
+             <span class="badge badge-gold"><i class="fas fa-trophy"></i> Top 10% da Turma</span>
+             <span class="badge badge-green"><i class="fas fa-check-circle"></i> Presença Impecável</span>
+             <span class="badge badge-blue"><i class="fas fa-robot"></i> InoAI User</span>
+          </div>
+        </div>
+        <i class="fas fa-user-astronaut fa-3x" style="color:#007acc; opacity:0.5;"></i>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-top: 25px;">
+          <div class="chart-container" style="margin-top:0;">
+             <canvas id="alunoChart"></canvas>
+          </div>
+          <div style="background:var(--bg-card); padding:20px; border-radius:10px; border:1px solid var(--border); display:flex; flex-direction:column; justify-content:center;">
+             <h4 style="margin-bottom:15px; color:var(--primary);"><i class="fas fa-clock"></i> Próxima Entrega</h4>
+             <div id="proximaAtividadeContainer">Carregando...</div>
+             <hr style="border:0; border-top:1px solid var(--border); margin:15px 0;">
+             <div class="progresso-circulo" style="width:80px; height:80px; margin:0 auto;"><span>0%</span></div>
+             <p style="text-align:center; font-size:0.8em; margin-top:5px;">Conclusão Geral</p>
+          </div>
+      </div>
+
+      <h3 style="margin-top:35px;">Acessos Rápidos</h3>
+      <div class="dashboard-grid">
+        <a href="#" class="dashboard-card" data-target="minhas-atividades"><i class="fas fa-tasks"></i><h3>Atividades</h3></a>
+        <a href="#" class="dashboard-card" data-target="minhas-notas"><i class="fas fa-graduation-cap"></i><h3>Notas</h3></a>
+        <a href="#" class="dashboard-card" data-target="minha-frequencia"><i class="fas fa-user-check"></i><h3>Frequência</h3></a>
+        <a href="#" class="dashboard-card" data-target="calendario"><i class="fas fa-calendar-alt"></i><h3>Calendário</h3></a>
+        <a href="#" class="dashboard-card" data-target="ia-assistente"><i class="fas fa-robot"></i><h3>Central IA</h3></a>
+      </div>
+    </div>
+
+    <div id="minhas-notas" class="content-section" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2>Minhas Notas</h2>
+          <button class="btn-pdf" style="background:#6f42c1; color:white; border:none; padding:8px 15px; border-radius:5px; cursor:pointer;">
+             <i class="fas fa-file-pdf"></i> Baixar Boletim Oficial
+          </button>
+      </div>
+      <div id="areaNotasAluno"><p>A carregar notas...</p></div>
+    </div>
+
+    <div id="minhas-atividades" class="content-section" style="display:none;">
+      <h2>Minhas Atividades</h2>
+      <div id="areaAtividadesAluno"><p>A carregar atividades...</p></div>
+      <template id="uploadTemplate">
+        <form class="upload-inline" enctype="multipart/form-data">
+          <input type="file" name="file" accept=".pdf,.doc,.docx" required>
+          <input type="hidden" name="atividade_id">
+          <button type="submit">📎 Enviar</button>
+          <span class="msg"></span>
+        </form>
+      </template>
+    </div>
+
+    <div id="minha-frequencia" class="content-section" style="display:none;">
+      <h2>Minha Frequência</h2>
+      <div id="areaFrequenciaAluno"><p>A carregar frequência...</p></div>
+    </div>
+
+    <div id="calendario" class="content-section" style="display:none;">
+      <h2>Calendário de Entregas</h2>
+      <div id="calendarAluno"></div>
+    </div>
+
+    <div id="ia-assistente" class="content-section" style="display:none;">
+      <h2>Central de Inteligência Artificial</h2>
+      <div class="boxIA">
+        <h3><i class="fas fa-chart-pie"></i> Relatório de Risco</h3>
+        <button id="gerarRelatorio"><i class="fas fa-search"></i> Analisar Risco</button>
+        <div id="resultadoIA"></div>
+      </div>
+      <div class="boxIA">
+        <h3><i class="fas fa-lightbulb"></i> Resumo do Desempenho</h3>
+        <button id="btnGerarResumo"><i class="fas fa-magic"></i> Gerar Resumo</button>
+        <div id="iaResumo"></div>
+      </div>
+      <div id="iaRecomendacoes" class="boxIA" style="display:none;"><h3><i class="fas fa-list-check"></i> Recomendações</h3><ul></ul></div>
+      <div id="iaCronograma" class="boxIA">
+        <h3><i class="fas fa-calendar-day"></i> Cronograma</h3>
+        <button id="gerarPlano7"><i class="fas fa-calendar-plus"></i> Gerar Cronograma</button>
+        <div id="cronogramaConteudo"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="notif-dropdown" id="notifDropdown">
+    <div class="notif-item new">📢 <b>Sistema:</b> Bem-vindo à InovaTech v30.0!</div>
+    <div class="notif-item new">📅 <b>Agenda:</b> Entrega de PIM próxima (20/11).</div>
+    <div class="notif-item">🎓 <b>Secretaria:</b> Rematrícula aberta.</div>
+</div>
+
+<div id="chatBtn" class="chat-widget-btn"><i class="fas fa-comments"></i></div>
+<div id="chatWindow" class="chat-window">
+  <div class="chat-header">
+    <span><i class="fas fa-robot"></i> InoAI</span>
+    <div style="display:flex; gap:15px; align-items:center;">
+        <i class="fas fa-volume-mute" id="toggleVoice" style="cursor:pointer; font-size:1.1em; opacity:0.7;" title="Ativar Voz"></i>
+        <span class="chat-close" id="closeChat">&times;</span>
+    </div>
+  </div>
+  <div class="chat-body" id="chatBody"><div class="chat-msg bot">Olá! Sou a IA do sistema. Posso falar com você! Ative o som 🔊</div></div>
+  <div class="chat-input-area"><input type="text" id="chatInput" placeholder="Digite sua dúvida..."><button id="chatSend"><i class="fas fa-paper-plane"></i></button></div>
+</div>
+
+<div id="toast">Ação realizada!</div>
+
+</body>
+</html>
+
+--------------------------------------------------
+
+==================================================
+ARQUIVO: templates/professor.html
+==================================================
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel Professor - InovaTech</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <link rel="icon" href="{{ url_for('static', filename='logo-inovatech.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='script.js') }}" defer></script>
+
+  <style>
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 25px; }
+    .stat-card { background: var(--bg-card); padding: 20px; border-radius: 10px; border: 1px solid var(--border); display: flex; align-items: center; gap: 15px; transition: 0.3s; }
+    .stat-card:hover { transform: translateY(-5px); box-shadow: 0 5px 15px rgba(0,0,0,0.08); border-color: var(--primary); }
+    .stat-icon { width: 50px; height: 50px; border-radius: 50%; background: #e6f2ff; color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+    .stat-info h3 { margin: 0; font-size: 1.5rem; color: var(--text-main); }
+    .stat-info p { margin: 0; color: var(--text-sec); font-size: 0.9rem; }
+    
+    .chart-container { background: white; padding: 20px; border-radius: 10px; margin-top: 25px; border: 1px solid #e0e0e0; height: 300px; display: flex; justify-content: center; }
+
+    .prof-table { width: 100%; border-collapse: collapse; margin-top: 15px; background: var(--bg-card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    .prof-table th { background: rgba(0,0,0,0.05); padding: 12px; text-align: left; color: var(--text-main); font-weight: 600; border-bottom: 2px solid var(--border); }
+    .prof-table td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    
+    .input-nota { width: 60px; padding: 5px; border: 1px solid var(--border); border-radius: 4px; text-align: center; background: var(--bg-body); color: var(--text-main); }
+    
+    .btn-action { padding: 6px 12px; border-radius: 4px; border: none; cursor: pointer; color: #fff; font-size: 0.85rem; transition: 0.2s; }
+    .btn-save { background: #28a745; } .btn-save:hover { background: #218838; }
+    .btn-download { background: #007acc; } .btn-download:hover { background: #005f99; }
+    .btn-pdf { background: #6f42c1; font-weight: bold; } .btn-pdf:hover { background: #5a32a3; }
+    .btn-profile { background: #6c757d; } .btn-profile:hover { background: #5a6268; }
+    
+    .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: bold; }
+    .status-ativo { background: #d4edda; color: #155724; }
+    .status-entregue { background: #d1ecf1; color: #0c5460; }
+    .status-pendente { background: #fff3cd; color: #856404; }
+  </style>
+</head>
+
+<body>
+<div class="dashboard-container">
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <img src="{{ url_for('static', filename='logo-inovatech.png') }}" alt="Logo InovaTech">
+      <h3>InovaTech</h3>
+    </div>
+    <ul class="sidebar-menu">
+      <li><a href="#" data-target="inicio" class="active"><i class="fas fa-home"></i> Visão Geral</a></li>
+      <li class="menu-header">Gestão Acadêmica</li>
+      <li><a href="#" data-target="gerenciar-alunos"><i class="fas fa-users"></i> Meus Alunos</a></li>
+      <li><a href="#" data-target="lancar-notas"><i class="fas fa-clipboard-check"></i> Lançar Notas</a></li>
+      <li><a href="#" data-target="lancar-frequencia"><i class="fas fa-calendar-check"></i> Lançar Frequência</a></li>
+      <li><a href="#" data-target="criar-atividade"><i class="fas fa-pen-to-square"></i> Criar Atividade</a></li>
+      <li><a href="#" data-target="consultar-entregas"><i class="fas fa-file-arrow-down"></i> Entregas</a></li>
+      <li class="menu-header">Planejamento</li>
+      <li><a href="#" data-target="calendario-professor"><i class="fas fa-calendar-alt"></i> Calendário</a></li>
+      <li class="menu-header">Inteligência Artificial</li>
+      <li><a href="#" data-target="relatorio-ia-prof"><i class="fas fa-robot"></i> Central IA</a></li>
+      
+      <li style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+          <a href="#" id="toggleDark"><i class="fas fa-moon"></i> Modo Escuro</a>
+      </li>
+      <li>
+          <a href="#" id="notifBtn">
+              <i class="fas fa-bell"></i> Notificações 
+              <span class="notification-badge">3</span>
+          </a>
+      </li>
+    </ul>
+    <div class="sidebar-footer"><p>Prof. Inova</p><a href="#" id="logout"><i class="fas fa-sign-out-alt"></i> Sair</a></div>
+  </div>
+
+  <div class="main-content">
+    <h1 id="pageTitle">Olá, Professor 👋</h1>
+
+    <div id="inicio" class="content-section">
+      <div class="welcome-header">
+        <div><h2>Gestão de Turmas</h2><p>Acompanhe o progresso e atividades.</p></div>
+        <i class="fas fa-chalkboard-user fa-3x" style="color:var(--primary); opacity:0.5;"></i>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-user-graduate"></i></div><div class="stat-info"><h3 id="totalAlunos">3</h3><p>Alunos</p></div></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-layer-group"></i></div><div class="stat-info"><h3 id="totalTurmas">1</h3><p>Turmas</p></div></div>
+        <div class="stat-card"><div class="stat-icon"><i class="fas fa-book-open"></i></div><div class="stat-info"><h3 id="totalAtividades">7</h3><p>Atividades</p></div></div>
+      </div>
+      <div class="chart-container"><canvas id="turmaChart"></canvas></div>
+      <div class="dashboard-grid">
+        <a href="#" class="dashboard-card" data-target="criar-atividade"><i class="fas fa-pen-to-square"></i><h3>Nova Atividade</h3></a>
+        <a href="#" class="dashboard-card" data-target="lancar-notas"><i class="fas fa-star"></i><h3>Lançar Notas</h3></a>
+        <a href="#" class="dashboard-card" data-target="lancar-frequencia"><i class="fas fa-check-double"></i><h3>Frequência</h3></a>
+        <a href="#" class="dashboard-card" data-target="relatorio-ia-prof"><i class="fas fa-brain"></i><h3>Central IA</h3></a>
+      </div>
+    </div>
+
+    <div id="gerenciar-alunos" class="content-section" style="display:none;">
+      <h2>Meus Alunos</h2>
+      <div class="boxIA">
+        <h3>Turma: ADS - 2º Semestre</h3>
+        <table class="prof-table">
+          <thead><tr><th>Matrícula</th><th>Nome</th><th>Status</th><th>Ação</th></tr></thead>
+          <tbody>
+            <tr><td>2025001</td><td>Maria Silva</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+            <tr><td>2025002</td><td>João Pereira</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+            <tr><td>2025003</td><td>Ana Costa</td><td><span class="status-badge status-ativo">Ativo</span></td><td><button class="btn-action btn-download">Perfil</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="lancar-notas" class="content-section" style="display:none;">
+      <h2>Lançar Notas</h2>
+      <div class="boxIA">
+        <h3>Disciplina: Web</h3>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>P1</th><th>P2</th><th>Salvar</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td><input type="number" class="input-nota" value="8.5"></td><td><input type="number" class="input-nota" value="9.0"></td><td><button class="btn-action btn-save">💾</button></td></tr>
+            <tr><td>João Pereira</td><td><input type="number" class="input-nota" value="6.0"></td><td><input type="number" class="input-nota" value="7.5"></td><td><button class="btn-action btn-save">💾</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="lancar-frequencia" class="content-section" style="display:none;">
+      <h2>Lançar Frequência</h2>
+      <div class="boxIA">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3>Chamada</h3>
+            <button class="btn-action btn-pdf"><i class="fas fa-file-pdf"></i> Gerar Diário Digital</button>
+        </div>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>Presença</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td><input type="checkbox" checked> Presente</td></tr>
+            <tr><td>João Pereira</td><td><input type="checkbox" checked> Presente</td></tr>
+            <tr><td>Ana Costa</td><td><input type="checkbox"> <span style="color:red">Ausente</span></td></tr>
+          </tbody>
+        </table>
+        <button class="btn-action btn-save" style="margin-top:15px; padding:10px 20px;">Confirmar Chamada</button>
+      </div>
+    </div>
+
+    <div id="consultar-entregas" class="content-section" style="display:none;">
+      <h2>Entregas</h2>
+      <div class="boxIA">
+        <h3>Atividade: PIM IV</h3>
+        <table class="prof-table">
+          <thead><tr><th>Aluno</th><th>Arquivo</th><th>Ação</th></tr></thead>
+          <tbody>
+            <tr><td>Maria Silva</td><td>PIM_Maria.pdf</td><td><button class="btn-action btn-download">⬇ Baixar</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="criar-atividade" class="content-section" style="display:none;">
+      <h2>Criar Nova Atividade</h2>
+      <div class="boxIA">
+        <form id="formNovaAtividade">
+          <div class="form-container" style="margin-top:0; border:none; padding:0;">
+            <label>Título</label><input type="text" id="titulo" required>
+            <label>Disciplina</label><input type="text" id="disciplina" required>
+            <label>Data</label><input type="date" id="data_entrega" required>
+            <button type="submit">Publicar</button>
+          </div>
+        </form>
+        <div id="msgAtividade" style="margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <div id="calendario-professor" class="content-section" style="display:none;">
+      <h2>Calendário</h2>
+      <div id="calendarProfessor"></div>
+    </div>
+
+    <div id="relatorio-ia-prof" class="content-section" style="display:none;">
+      <h2>Central de Inteligência Artificial (Docente)</h2>
+      
+      <div class="boxIA">
+         <h3><i class="fas fa-chart-line"></i> Análise Geral da Turma</h3>
+         <p>Utilize a InoAI para identificar padrões de desempenho e média global.</p>
+         <button id="gerarRelatorioProfessor"><i class="fas fa-search"></i> Analisar Turma Agora</button>
+         <div id="resultadoRelatorioProfessor" style="display:none; margin-top:15px; padding-top:15px; border-top:1px solid #eee;"></div>
+      </div>
+
+      <div class="boxIA" style="border-left: 5px solid #dc3545;">
+        <h3><i class="fas fa-exclamation-triangle" style="color:#dc3545"></i> Radar de Evasão Escolar</h3>
+        <p>A IA identificou alunos com alta probabilidade de reprovação baseada em faltas e notas.</p>
+        <button id="btnRadarRisco" style="background:#dc3545;"><i class="fas fa-user-injured"></i> Ver Alunos em Risco</button>
+        
+        <div id="listaRisco" style="display:none; margin-top:15px;">
+            <table class="prof-table">
+                <thead><tr><th>Aluno</th><th>Risco Calculado</th><th>Motivo Principal</th></tr></thead>
+                <tbody>
+                    <tr><td>Ana Costa</td><td><span style="color:red; font-weight:bold;">85%</span></td><td>Excesso de Faltas (12)</td></tr>
+                    <tr><td>Carlos Lima</td><td><span style="color:orange; font-weight:bold;">45%</span></td><td>Queda brusca de notas</td></tr>
+                </tbody>
+            </table>
+            <p style="font-size:0.9em; color:#666; margin-top:10px;">* Sugestão da InoAI: Agendar reunião pedagógica com estes alunos.</p>
+        </div>
+      </div>
+
+      <div class="boxIA" style="border-left: 5px solid #28a745;">
+        <h3><i class="fas fa-magic" style="color:#28a745"></i> Assistente de Criação de Provas</h3>
+        <p>Peça para a InoAI gerar uma questão de prova sobre qualquer tema.</p>
+        
+        <div style="display:flex; gap:10px; margin-top:10px;">
+            <input type="text" id="temaQuestao" placeholder="Digite um tema (ex: SQL, Python, Ética)..." style="flex:1;">
+            <button id="btnGerarQuestao" style="background:#28a745; margin-top:0;"><i class="fas fa-bolt"></i> Gerar</button>
+        </div>
+
+        <div id="resultadoQuestao" style="display:none; margin-top:15px; background:#f8f9fa; padding:15px; border-radius:6px; border:1px dashed #ccc;">
+            <p><b>🤖 Questão Gerada:</b></p>
+            <p id="textoQuestao" style="font-style:italic; color:#333;">...</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="notif-dropdown" id="notifDropdown">
+    <div class="notif-item new">📢 <b>Sistema:</b> InovaTech v32.0 rodando!</div>
+    <div class="notif-item new">📅 <b>Agenda:</b> Reunião Pedagógica (15/11).</div>
+    <div class="notif-item">🎓 <b>Diretoria:</b> Prazos de notas abertos.</div>
+</div>
+
+<div id="chatBtn" class="chat-widget-btn"><i class="fas fa-comments"></i></div>
+<div id="chatWindow" class="chat-window">
+  <div class="chat-header">
+    <span><i class="fas fa-robot"></i> InoAI</span>
+    <div style="display:flex; gap:15px; align-items:center;">
+        <i class="fas fa-volume-mute" id="toggleVoice" style="cursor:pointer; font-size:1.1em; opacity:0.7;" title="Ativar Voz"></i>
+        <span class="chat-close" id="closeChat">&times;</span>
+    </div>
+  </div>
+  <div class="chat-body" id="chatBody"><div class="chat-msg bot">Olá, Professor! Posso ajudar a calcular médias ou agendar atividades?</div></div>
+  <div class="chat-input-area"><input type="text" id="chatInput" placeholder="Digite sua dúvida..."><button id="chatSend"><i class="fas fa-paper-plane"></i></button></div>
+</div>
+
+<div id="toast">Ação realizada!</div>
+
+</body>
+</html>
+
+--------------------------------------------------
+

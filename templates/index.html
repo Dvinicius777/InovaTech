@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>InovaTech - Login</title>
+
+  <!-- Ícone e CSS global -->
+  <link rel="icon" href="{{ url_for('static', filename='logo-inovatech.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+
+  <!-- Ícones -->
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <style>
+    body.login-body {
+      background: linear-gradient(120deg, #003366 0%, #0059b3 100%);
+      font-family: "Segoe UI", Arial, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+
+    .login-container {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      padding: 35px 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+      animation: fadeIn 0.6s ease;
+    }
+
+    .login-container h1 {
+      color: #003366;
+      margin-bottom: 8px;
+      font-size: 1.8rem;
+    }
+
+    .login-container p {
+      margin-top: 0;
+      color: #444;
+      font-size: 0.95rem;
+    }
+
+    form input {
+      width: 100%;
+      padding: 10px 12px;
+      margin: 10px 0;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
+    }
+
+    form input:focus {
+      border-color: #007acc;
+      outline: none;
+    }
+
+    form button[type="submit"] {
+      background-color: #007acc;
+      color: #fff;
+      border: none;
+      padding: 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: bold;
+      font-size: 1rem;
+      margin-top: 8px;
+      transition: background 0.2s;
+    }
+
+    form button[type="submit"]:hover {
+      background-color: #005fa3;
+    }
+
+    .login-info {
+      margin-top: 20px;
+      background: #f7faff;
+      border-radius: 6px;
+      padding: 15px;
+      font-size: 0.9rem;
+    }
+
+    .demo-btn {
+      background: #eef4f9;
+      color: #003366;
+      border: 1px solid #d7e3f2;
+      padding: 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background .2s;
+    }
+
+    .demo-btn:hover { background: #e4eefc; }
+
+    /* ===== Splash screen ===== */
+    #loading-screen {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: linear-gradient(120deg, #003366 0%, #0059b3 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      color: #fff;
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 1.3rem;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+
+    #loading-screen.active {
+      opacity: 1;
+      pointer-events: all;
+    }
+
+    #loading-screen i {
+      margin-bottom: 15px;
+      font-size: 2rem;
+      animation: spin 1.2s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes fadeIn {
+      from {opacity: 0; transform: translateY(20px);}
+      to {opacity: 1; transform: translateY(0);}
+    }
+  </style>
+</head>
+
+<body class="login-body">
+  <!-- Splash de carregamento -->
+  <div id="loading-screen">
+    <i class="fas fa-circle-notch"></i>
+    <span>Carregando seu painel...</span>
+  </div>
+
+  <div class="login-container" role="main" aria-labelledby="appTitle">
+    <img src="{{ url_for('static', filename='logo-inovatech.png') }}" alt="Logo InovaTech" width="100" style="margin-bottom:10px;">
+    <h1 id="appTitle">InovaTech</h1>
+    <p>Acesso ao Painel Acadêmico</p>
+
+    <form id="loginForm" autocomplete="on" novalidate>
+      <input type="text" id="usuario" placeholder="Usuário" name="username" required autofocus aria-label="Usuário"/>
+
+      <div style="position:relative;">
+        <input type="password" id="senha" placeholder="Senha" name="current-password" required aria-label="Senha" style="padding-right:38px;">
+        <button type="button" id="toggleSenha"
+                aria-label="Mostrar ou esconder senha"
+                style="position:absolute; right:8px; top:50%; transform:translateY(-50%); background:transparent; border:none; cursor:pointer;">
+          <i class="fa-solid fa-eye" id="eyeIcon"></i>
+        </button>
+      </div>
+
+      <button type="submit" id="btnEntrar">Entrar</button>
+      <p id="loginErro" style="color:red; margin:10px 0 0; display:none;"></p>
+    </form>
+
+    <div class="login-info">
+      <p><b>Usuários de teste (login / senha):</b></p>
+      <div style="display:grid; gap:8px; margin-top:8px;">
+        <button type="button" class="demo-btn" data-user="aluno1" data-pass="123">aluno1 / 123</button>
+        <button type="button" class="demo-btn" data-user="prof.inova" data-pass="123">prof.inova / 123</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ===== Botões demo =====
+    document.querySelectorAll('.demo-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('usuario').value = btn.dataset.user || '';
+        document.getElementById('senha').value = btn.dataset.pass || '';
+        document.getElementById('usuario').focus();
+      });
+    });
+
+    // ===== Mostrar / ocultar senha =====
+    const toggleSenha = document.getElementById('toggleSenha');
+    const senhaInput = document.getElementById('senha');
+    const eyeIcon = document.getElementById('eyeIcon');
+    toggleSenha.addEventListener('click', () => {
+      const isHidden = senhaInput.type === 'password';
+      senhaInput.type = isHidden ? 'text' : 'password';
+      eyeIcon.classList.toggle('fa-eye');
+      eyeIcon.classList.toggle('fa-eye-slash');
+    });
+
+    // ===== Splash screen =====
+    const showLoading = () => document.getElementById('loading-screen').classList.add('active');
+    const hideLoading = () => document.getElementById('loading-screen').classList.remove('active');
+
+    // ===== Login =====
+    const form = document.getElementById('loginForm');
+    const erroEl = document.getElementById('loginErro');
+    const btnEntrar = document.getElementById('btnEntrar');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      erroEl.style.display = 'none';
+      btnEntrar.disabled = true;
+      btnEntrar.textContent = 'Entrando...';
+
+      const user = document.getElementById('usuario').value.trim();
+      const pass = document.getElementById('senha').value;
+
+      try {
+        const resp = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user, pass })
+        });
+
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Usuário ou senha incorretos.');
+
+        localStorage.setItem('InovaTechUser', JSON.stringify(data.user));
+        const role = (data.user.role || '').toLowerCase();
+
+        showLoading();
+        setTimeout(() => {
+          if (role === 'aluno') window.location.href = '/aluno';
+          else if (role === 'professor') window.location.href = '/professor';
+          else window.location.href = '/';
+        }, 1500);
+
+      } catch (err) {
+        erroEl.textContent = err.message || 'Falha ao entrar. Tente novamente.';
+        erroEl.style.display = 'block';
+      } finally {
+        btnEntrar.disabled = false;
+        btnEntrar.textContent = 'Entrar';
+      }
+    });
+
+    // ===== Redirecionamento automático se já logado =====
+    (function() {
+      const raw = localStorage.getItem('InovaTechUser');
+      if (!raw) return;
+      try {
+        const u = JSON.parse(raw);
+        showLoading();
+        setTimeout(() => {
+          if (u?.role?.toLowerCase() === 'aluno') window.location.replace('/aluno');
+          else if (u?.role?.toLowerCase() === 'professor') window.location.replace('/professor');
+          else hideLoading();
+        }, 1500);
+      } catch { hideLoading(); }
+    })();
+  </script>
+</body>
+</html>
