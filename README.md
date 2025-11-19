@@ -1,9 +1,10 @@
-# InovaTech
-InovaTech – Sistema Acadêmico
+InovaTech
+Sistema Acadêmico – Projeto Acadêmico
 
-Este projeto foi desenvolvido como parte das atividades da graduação em Análise e Desenvolvimento de Sistemas. O objetivo é simular um sistema acadêmico funcional, integrando diferentes áreas (aluno, professor e administração), de forma simples, organizada e próxima da realidade de uma aplicação web.
+O InovaTech é um sistema acadêmico desenvolvido como parte das atividades da graduação em Análise e Desenvolvimento de Sistemas.
+O objetivo foi simular, de forma funcional, um ambiente acadêmico que integra diferentes perfis (aluno, professor e administração), oferecendo navegação clara, páginas estruturadas e funcionalidades reais de um sistema web.
 
-O desenvolvimento foi realizado praticamente de forma individual, com apoio técnico pontual de ferramentas de IA para dúvidas específicas e otimizações.
+Todo o desenvolvimento foi feito praticamente de forma individual, com uso de IA apenas como apoio para dúvidas técnicas específicas.
 
 Tecnologias Utilizadas
 Backend
@@ -24,26 +25,26 @@ CSS3
 
 JavaScript
 
-Templates Jinja2 integrados ao Flask
+Templates Jinja2 (integrados ao Flask)
 
-Ferramentas de Desenvolvimento
+Ferramentas
 
-Visual Studio Code
+Windows (ambiente de desenvolvimento)
+
+VS Code
 
 Git e GitHub
 
-Ambiente Windows
+IA Generativa utilizada apenas para suporte técnico (revisão de ideias e correções pontuais)
 
-IA Generativa apenas como suporte técnico (refinamento de ideias e correções)
-
-Principais Funcionalidades
+Funcionalidades
 Área do Aluno
 
 Login autenticado
 
 Visualização de notas
 
-Acesso a materiais enviados pelo professor
+Acesso a materiais enviados pelos professores
 
 Consulta ao calendário acadêmico
 
@@ -61,9 +62,9 @@ Banco de dados estruturado em SQLite
 
 Organização interna por pastas (templates, static, uploads)
 
-Rotas protegidas e lógica de sessão
+Lógica de sessão e rotas protegidas
 
-Arquitetura e Estrutura do Projeto
+Estrutura do Projeto
 InovaTech/
 │
 ├── static/
@@ -79,10 +80,13 @@ InovaTech/
 ├── uploads/
 │
 ├── academia.db
-└── app.py
+├── app.py
+├── add_notas.py
+├── populate_db.py
+└── demais arquivos auxiliares
 
 
-A estrutura foi pensada para ser clara e de fácil manutenção, separando arquivos estáticos, páginas, banco de dados e código backend.
+A estrutura foi pensada para ser simples e de fácil manutenção, mantendo arquivos estáticos, páginas, banco de dados e backend claramente separados.
 
 Como Executar o Projeto
 
@@ -98,28 +102,28 @@ python app.py
 
 Abra no navegador:
 
-http://127...
+http://127.0.0.1:5000
 
 
-O sistema inicializa imediatamente e já se conecta ao banco academia.db.
+O sistema inicializa automaticamente e já utiliza o banco de dados academia.db.
 
 Objetivo Educacional do Projeto
 
 O InovaTech foi criado para:
 
-praticar Python aplicado ao desenvolvimento web
+Praticar Python aplicado ao desenvolvimento web
 
-reforçar lógica de programação
+Reforçar lógica de programação
 
-aprender arquitetura de aplicações Flask
+Estudar arquitetura básica de aplicações Flask
 
-trabalhar com banco de dados
+Trabalhar com banco de dados SQLite
 
-integrar frontend e backend
+Integrar frontend e backend
 
-aplicar versionamento de código
+Aplicar versionamento de código
 
-simular um sistema acadêmico próximo de um produto real
+Simular um sistema acadêmico próximo de um produto real
 
 Autor
 
