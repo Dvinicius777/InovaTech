@@ -1,7 +1,7 @@
 /* analise.c */
 
 /*
-   Esta função será o nosso "módulo crítico".
+   Esta função será é o "módulo crítico".
    Ela será "exportada" para que o Python (app.py) a possa encontrar.
    
    __declspec(dllexport) é a magia que diz ao compilador para 
@@ -11,7 +11,7 @@
 __declspec(dllexport)
 int verificar_risco_ia(double media_notas, int total_faltas) {
     
-    // As mesmas regras que tínhamos no app.py
+    // As mesmas regras no app.py
     double LIMITE_MEDIA_NOTAS = 6.0;
     int LIMITE_FALTAS = 3;
 
@@ -35,4 +35,5 @@ int verificar_risco_ia(double media_notas, int total_faltas) {
        3 = Risco de Média E Faltas (1 + 2)
     */
     return risco_media + risco_faltas;
+
 }
